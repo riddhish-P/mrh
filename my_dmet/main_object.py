@@ -1018,6 +1018,8 @@ class dmet:
             assert (np.isclose (ovlp, 1)), 'unless replace=True, mo_coeff must contain current active orbitals at range {}:{} (err={})'.format (ncore_current,nocc_current, ovlp-1)
             if caslst is not None and len (caslst) > 0:
                 assert (np.all (np.isin (list(range(ncore_current+1,nocc_current+1)), caslst))), 'caslst must contain range {}:{} inclusive ({})'.format (ncore_current+1, nocc_current, caslst)
+        else:
+            ncore_current = nocc_current =(self.ints.nelec_tot+1)//2
 
         if caslst is not None and len (caslst) == 0: caslst = None
         if caslst is not None and cas_irrep_nocc is not None:
