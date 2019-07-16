@@ -1006,12 +1006,11 @@ class dmet:
 
         nelec_wmas_current = sum ([f.nelec_as for f in self.fragments if f.norbs_as > 0])
         norbs_wmas_current = sum ([f.norbs_as for f in self.fragments if f.norbs_as > 0])
-        assert ((self.ints.nelec_tot - nelec_wmas_current) % 2 == 0), 'parity problem: {} of {} electrons active in currently'.format (nelec_wmas_target, self.ints.nelec_tot)
-        ncore_current = (self.ints.nelec_tot - nelec_wmas_current) // 2
-        nocc_current = ncore_current + norbs_wmas_current
-        print ("ncore_current = {}; nocc_current = {}".format (ncore_current, nocc_current))
-
         if norbs_wmas_current > 0:
+            assert ((self.ints.nelec_tot - nelec_wmas_current) % 2 == 0), 'parity problem: {} of {} electrons active in currently'.format (nelec_wmas_current, self.ints.nelec_tot)
+            ncore_current = (self.ints.nelec_tot - nelec_wmas_current) // 2
+            nocc_current = ncore_current + norbs_wmas_current
+            print ("ncore_current = {}; nocc_current = {}".format (ncore_current, nocc_current))
             wmas2ao_current = (self.ints.ao2loc @ loc2wmas_current).conjugate ().T
             amo_coeff = mo_coeff[:,ncore_current:nocc_current]
             ovlp = wmas2ao_current @ self.ints.ao_ovlp @ amo_coeff
