@@ -62,8 +62,10 @@ def solve (frag, guess_1RDM, chempot_imp):
     abs_2S = int (round (2 * abs (frag.target_S)))
     sign_MS = np.sign (frag.target_MS) or 1
     mol.spin = abs_2MS
-    mol.verbose = 0 if frag.mol_output is None else lib.logger.DEBUG
-    mol.output = frag.mol_output
+    mol.verbose = 0 
+    if frag.mol_stdout is None:
+        mol.output = frag.mol_output
+        mol.verbose = 0 if frag.mol_output is None else lib.logger.DEBUG
     mol.atom.append(('H', (0, 0, 0)))
     mol.nelectron = frag.nelec_imp
     if frag.enforce_symmetry:
@@ -72,6 +74,11 @@ def solve (frag, guess_1RDM, chempot_imp):
         mol.irrep_name = frag.ir_names
         mol.irrep_id   = frag.ir_ids
     mol.build ()
+    if frag.mol_stdout is None:
+        frag.mol_stdout = mol.stdout
+    else:
+        mol.stdout = frag.mol_stdout
+        mol.verbose = 0 if frag.mol_output is None else lib.logger.DEBUG
     if frag.enforce_symmetry: mol.symmetry = True
     #mol.incore_anyway = True
     mf = scf.RHF(mol)
@@ -192,10 +199,14 @@ def solve (frag, guess_1RDM, chempot_imp):
             print ("Discarding stored ci guess because orbitals are too different (missing {} nonzero svals)".format (norbs_amo-svals.size))
 
     # Symmetry align if possible
-    imp2mo[:,:norbs_cmo] = frag.align_imporbs_symm (imp2mo[:,:norbs_cmo], sorting_metric=fock_imp, sort_vecs=1, orbital_type='guess inactive', mol=mol)[0]
-    imp2mo[:,norbs_cmo:norbs_occ], umat = frag.align_imporbs_symm (imp2mo[:,norbs_cmo:norbs_occ],
-                                                                          sorting_metric=fock_imp, sort_vecs=1, orbital_type='guess active', mol=mol)
-    imp2mo[:,norbs_occ:] = frag.align_imporbs_symm (imp2mo[:,norbs_occ:], sorting_metric=fock_imp, sort_vecs=1, orbital_type='guess external', mol=mol)[0]
+    imp2unac = frag.align_imporbs_symm (np.append (imp2mo[:,:norbs_cmo], imp2mo[:,norbs_occ:], axis=1), sorting_metric=fock_imp,
+        sort_vecs=1, orbital_type='guess unactive', mol=mol)[0]
+    imp2mo[:,:norbs_cmo] = imp2unac[:,:norbs_cmo]
+    imp2mo[:,norbs_occ:] = imp2unac[:,norbs_cmo:]
+    #imp2mo[:,:norbs_cmo] = frag.align_imporbs_symm (imp2mo[:,:norbs_cmo], sorting_metric=fock_imp, sort_vecs=1, orbital_type='guess inactive', mol=mol)[0]
+    imp2mo[:,norbs_cmo:norbs_occ], umat = frag.align_imporbs_symm (imp2mo[:,norbs_cmo:norbs_occ], sorting_metric=fock_imp,
+        sort_vecs=1, orbital_type='guess active', mol=mol)
+    #imp2mo[:,norbs_occ:] = frag.align_imporbs_symm (imp2mo[:,norbs_occ:], sorting_metric=fock_imp, sort_vecs=1, orbital_type='guess external', mol=mol)[0]
     if frag.enforce_symmetry:
         imp2mo = cleanup_subspace_symmetry (imp2mo, mol.symm_orb)
         err_symm = measure_subspace_blockbreaking (imp2mo, mol.symm_orb)
@@ -224,9 +235,7 @@ def solve (frag, guess_1RDM, chempot_imp):
 
     t_start = time.time()
     E_CASSCF = mc.kernel(imp2mo, ci0)[0]
-    if not mc.converged:
-        if np.any (np.abs (frag.impham_OEI_S) > 1e-8):
-            raise NotImplementedError('Gradient and Hessian fixes for nonsinglet environment of Newton-descent CASSCF algorithm')
+    if (not mc.converged) and np.all (np.abs (frag.impham_OEI_S) < 1e-8):
         mc = mc.newton ()
         E_CASSCF = mc.kernel(mc.mo_coeff, mc.ci)[0]
     if not mc.converged:
@@ -237,6 +246,8 @@ def solve (frag, guess_1RDM, chempot_imp):
         mc.fcisolver = csf_solver (mf.mol, smult)
         E_CASSCF = mc.kernel(imp2mo)[0]
         if not mc.converged:
+            if np.any (np.abs (frag.impham_OEI_S) > 1e-8):
+                raise NotImplementedError('Gradient and Hessian fixes for nonsinglet environment of Newton-descent CASSCF algorithm')
             mc = mc.newton ()
             E_CASSCF = mc.kernel(mc.mo_coeff, mc.ci)[0]
     assert (mc.converged)
