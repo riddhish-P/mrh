@@ -808,6 +808,7 @@ class LASCINoSymm (casci.CASCI):
     def make_rdm1 (self, **kwargs):
         return self.make_rdm1s (**kwargs).sum (0)
 
+
     def make_casdm1s (self, **kwargs):
         ''' Make the full-dimensional casdm1s spanning the collective active space '''
         casdm1s_sub = self.make_casdm1s_sub (**kwargs)
@@ -886,7 +887,6 @@ class LASCINoSymm (casci.CASCI):
         h1e = self.get_hcore ()[None,:,:] + veff_sub.sum (0)/2
         dm1s = self.make_rdm1s (mo_coeff=mo_coeff, ncore=ncore, ci=ci, ncas_sub=ncas_sub, nelecas_sub=nelecas_sub)
         energy_elec = e1 = np.dot (h1e.ravel (), dm1s.ravel ())
-
         # 2-body cumulant terms
         casdm1s_sub = self.make_casdm1s_sub (ci=ci, ncas_sub=ncas_sub, nelecas_sub=nelecas_sub)
         casdm2_sub = self.make_casdm2_sub (ci=ci, ncas_sub=ncas_sub, nelecas_sub=nelecas_sub)
@@ -901,7 +901,6 @@ class LASCINoSymm (casci.CASCI):
             te2 = np.tensordot (eri, cdm2, axes=4) / 2
             energy_elec += te2
             e2 += te2
-
         e0 = self.energy_nuc ()
         return energy_elec
 
@@ -1289,4 +1288,3 @@ class LASCI_HessianOperator (sparse_linalg.LinearOperator):
         gorb = self.fock1 - self.fock1.T
         gci = [2*hci0 for hci0 in self.hci0]
         return self.ugg.pack (gorb, gci)
-

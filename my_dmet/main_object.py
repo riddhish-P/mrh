@@ -49,6 +49,8 @@ from mrh.my_dmet.debug import debug_ofc_oneRDM, debug_Etot, examine_ifrag_olap, 
 from functools import reduce
 from itertools import combinations, product
 
+from mrh.my_dmet.las_pdft import get_las_pdft
+
 class dmet:
 
     def __init__( self, theInts, fragments, calcname='DMET', isTranslationInvariant=False, SCmethod='BFGS', incl_bath_errvec=True, use_constrained_opt=False, 
@@ -56,7 +58,7 @@ class dmet:
                     minFunc='FOCK_INIT', print_u=True,
                     print_rdm=True, debug_energy=False, debug_reloc=False, oldLASSCF=False,
                     nelec_int_thresh=1e-6, chempot_init=0.0, num_mf_stab_checks=0,
-                    corrpot_maxiter=50, orb_maxiter=50, chempot_tol=1e-6, corrpot_mf_moldens=0 ):
+                    corrpot_maxiter=50, orb_maxiter=50, chempot_tol=1e-6, corrpot_mf_moldens=0,doPDFT=None, PDFTgrid = 3):
 
 
         if isTranslationInvariant:
@@ -102,7 +104,8 @@ class dmet:
         self.enforce_symmetry         = enforce_symmetry
         self.lasci_log                = None
         self.oldLASSCF                = oldLASSCF
-
+        self.doPDFT                   = doPDFT
+        self.PDFTgrid                 = PDFTgrid
         for frag in self.fragments:
             frag.debug_energy             = debug_energy
             frag.num_mf_stab_checks       = num_mf_stab_checks
@@ -559,7 +562,10 @@ class dmet:
         print ("Whole-molecule natural orbital occupancies:\n{}".format (no_occ))
         print ("Writing trial wave function natural orbital molden")
         molden.from_mo (self.ints.mol, self.calcname + '_natorb.molden', ao2no, occ=no_occ, ene=no_ene)
-        
+        if (self.doPDFT != None) :
+            las, h2eff_sub, veff_sub = self.lasci()
+            get_las_pdft(las, self.doPDFT, self.PDFTgrid)
+
         return self.energy
 
     def doselfconsistent_corrpot (self, rdm_old, iters):
@@ -1145,7 +1151,7 @@ class dmet:
             oneRDMcore_loc = 2 * loc2wmcs[:,:ncore] @ loc2wmcs[:,:ncore].conjugate ().T
             self.ints.oneRDM_loc = oneRDMcore_loc
             self.ints.oneSDM_loc = np.zeros_like (oneRDMcore_loc)
-            self.ints.nelec_idem = ncore * 2
+            
             self.ints.loc2idem   = loc2wmcs
             # construct rohf-like density matrices and set loc2amo_guess -> loc2amo
             for nsomo, f, in zip (guess_somos, self.fragments):

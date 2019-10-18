@@ -242,6 +242,7 @@ def solve (frag, guess_1RDM, chempot_imp):
         print ('Assuming ci vector is poisoned; discarding...')
         imp2mo = mc.mo_coeff.copy ()
         mc = mcscf.CASSCF(mf, CASorb, CASe)
+        mc.max_cycle_macro = 50 if frag.imp_maxiter is None else frag.imp_maxiter ##Riddhish add line here
         smult = abs_2S + 1 if frag.target_S is not None else (frag.nelec_imp % 2) + 1
         mc.fcisolver = csf_solver (mf.mol, smult)
         E_CASSCF = mc.kernel(imp2mo)[0]

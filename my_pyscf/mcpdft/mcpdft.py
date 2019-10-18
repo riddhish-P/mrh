@@ -48,17 +48,24 @@ def kernel (mc, ot, root=-1):
         adm2s_os = adm2s[1]
     spin = abs(mc.nelecas[0] - mc.nelecas[1])
     t0 = logger.timer (ot, 'rdms', *t0)
-
     omega, alpha, hyb = ot._numint.rsh_and_hybrid_coeff(ot.otxc, spin=spin)
     Vnn = mc._scf.energy_nuc ()
     h = mc._scf.get_hcore ()
     dm1 = dm1s[0] + dm1s[1]
+
     if ot.verbose >= logger.DEBUG or abs (hyb) > 1e-10:
         vj, vk = mc._scf.get_jk (dm=dm1s)
         vj = vj[0] + vj[1]
     else:
         vj = mc._scf.get_j (dm=dm1)
     Te_Vne = np.tensordot (h, dm1)
+    print ('here??')
+    np.set_printoptions(threshold=np.inf)
+    print (mc.ncore, mc.ncas)
+    np.save ('mo_coeff_las', np.asarray (mc.mo_coeff) )
+    np.save ('dm1_cas', np.asarray (dm1s) )
+    np.save ('adm2_cas', np.asarray (adm2) )
+    print (np.trace(dm1s[0]) , np.trace(dm1s[1]) )
     # (vj_a + vj_b) * (dm_a + dm_b)
     E_j = np.tensordot (vj, dm1) / 2  
     # (vk_a * dm_a) + (vk_b * dm_b) Mind the difference!
@@ -89,11 +96,12 @@ def kernel (mc, ot, root=-1):
     if abs (hyb) > 1e-10:
         logger.debug (ot, 'Adding %s * %s CAS exchange to E_ot', hyb, E_x)
     t0 = logger.timer (ot, 'Vnn, Te, Vne, E_j, E_x', *t0)
-
     E_ot = get_E_ot (ot, dm1s, adm2, amo)
     t0 = logger.timer (ot, 'E_ot', *t0)
     e_tot = Vnn + Te_Vne + E_j + (hyb * E_x) + E_ot
     logger.info (ot, 'MC-PDFT E = %s, Eot(%s) = %s', e_tot, ot.otxc, E_ot)
+    print (Vnn,Te_Vne,E_j,E_x, 'is the mistake here?')
+    print ('you CAS-PDFT energies are:', e_tot, E_ot )
 
     return e_tot, E_ot
 
@@ -124,9 +132,7 @@ def get_E_ot (ot, oneCDMs, twoCDM_amo, ao2amo, max_memory=20000, hermi=1):
     '''
     ni, xctype, dens_deriv = ot._numint, ot.xctype, ot.dens_deriv
     norbs_ao = ao2amo.shape[0]
-
     E_ot = 0.0
-
     t0 = (time.clock (), time.time ())
     make_rho = tuple (ni._gen_rho_evaluator (ot.mol, oneCDMs[i,:,:], hermi) for i in range(2))
     for ao, mask, weight, coords in ni.block_loop (ot.mol, ot.grids, norbs_ao, dens_deriv, max_memory):
@@ -141,7 +147,6 @@ def get_E_ot (ot, oneCDMs, twoCDM_amo, ao2amo, max_memory=20000, hermi=1):
         t0 = logger.timer (ot, 'on-top pair density calculation', *t0) 
         E_ot += ot.get_E_ot (rho, Pi, weight)
         t0 = logger.timer (ot, 'on-top exchange-correlation energy calculation', *t0) 
-
     return E_ot
     
 def get_mcpdft_child_class (mc, ot, **kwargs):
