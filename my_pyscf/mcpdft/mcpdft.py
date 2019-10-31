@@ -59,16 +59,16 @@ def kernel (mc, ot, root=-1):
     else:
         vj = mc._scf.get_j (dm=dm1)
     Te_Vne = np.tensordot (h, dm1)
-    print ('here??')
+    
     np.set_printoptions(threshold=np.inf)
-    print (mc.ncore, mc.ncas)
-    np.save ('mo_coeff_las', np.asarray (mc.mo_coeff) )
-    np.save ('dm1_cas', np.asarray (dm1s) )
+    np.save ('mo_coeff_cas', np.asarray (mc.mo_coeff) )
+    np.save ('dm1s_cas', np.asarray (dm1s) )
     np.save ('adm2_cas', np.asarray (adm2) )
     print (np.trace(dm1s[0]) , np.trace(dm1s[1]) )
     # (vj_a + vj_b) * (dm_a + dm_b)
     E_j = np.tensordot (vj, dm1) / 2  
     # (vk_a * dm_a) + (vk_b * dm_b) Mind the difference!
+    print ('ot.verbose and logger.DEBUG', ot.verbose, logger.DEBUG)
     if ot.verbose >= logger.DEBUG or abs (hyb) > 1e-10:
         E_x = -(np.tensordot (vk[0], dm1s[0]) + np.tensordot (vk[1], dm1s[1])) / 2
     else:
@@ -100,7 +100,7 @@ def kernel (mc, ot, root=-1):
     t0 = logger.timer (ot, 'E_ot', *t0)
     e_tot = Vnn + Te_Vne + E_j + (hyb * E_x) + E_ot
     logger.info (ot, 'MC-PDFT E = %s, Eot(%s) = %s', e_tot, ot.otxc, E_ot)
-    print (Vnn,Te_Vne,E_j,E_x, 'is the mistake here?')
+    print ('the split' , Te_Vne,  E_j , E_x)
     print ('you CAS-PDFT energies are:', e_tot, E_ot )
 
     return e_tot, E_ot

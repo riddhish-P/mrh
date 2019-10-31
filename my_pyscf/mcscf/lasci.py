@@ -260,7 +260,8 @@ def h1e_for_cas (las, mo_coeff=None, ncas=None, ncore=None, nelecas=None, ci=Non
         for moH, veff_self, mo in zip (moH_cas, veff_sub, mo_cas)]
     return h1e
 
-def kernel (las, mo_coeff=None, ci0=None, casdm0_sub=None, conv_tol_grad=1e-4, verbose=lib.logger.NOTE):
+def kernel (las, mo_coeff=None, ci0=None, casdm0_sub=None, conv_tol_grad=1e-5, verbose=lib.logger.NOTE):
+#conv_tol_grad=1e-4 was tightened by riddhish
     if mo_coeff is None: mo_coeff = las.mo_coeff
     log = lib.logger.new_logger(las, verbose)
     t0 = (time.clock(), time.time())
@@ -346,7 +347,7 @@ def kernel (las, mo_coeff=None, ci0=None, casdm0_sub=None, conv_tol_grad=1e-4, v
         e_tot = las.energy_nuc () + las.energy_elec (mo_coeff=mo_coeff, ci=ci1, h2eff=h2eff_sub, veff_sub=veff_sub)
         gorb, gci, gx = las.get_grad (ugg=ugg, mo_coeff=mo_coeff, ci=ci1, h2eff_sub=h2eff_sub, veff_sub=veff_sub, dm1s=dm1s_sub.sum (0))
         norm_gorb = linalg.norm (gorb) if gorb.size else 0.0
-        norm_gci = linalg.norm (gci) if gci.size else 0.0
+        norm_gci =linalg.norm (gci) if gci.size else 0.0
         norm_gx = linalg.norm (gx) if gx.size else 0.0
         lib.logger.info (las, 'LASCI macro %d : E = %.15g ; |g_int| = %.15g ; |g_ci| = %.15g ; |g_ext| = %.15g', it+1, e_tot, norm_gorb, norm_gci, norm_gx)
         t1 = log.timer ('LASCI post-cycle energy & gradient', *t1)
@@ -651,7 +652,7 @@ class LASCINoSymm (casci.CASCI):
         self.nelecas_sub = np.asarray (nelecas)
         self.spin_sub = np.asarray (spin_sub)
         self.frozen = frozen
-        self.conv_tol_grad = 1e-4
+        self.conv_tol_grad = 1e-5  ##Tightened by Riddhish form 1e-4
         self.ah_level_shift = 1e-8
         self.max_cycle_macro = 50
         self.max_cycle_micro = 5

@@ -60,7 +60,6 @@ class dmet:
                     nelec_int_thresh=1e-6, chempot_init=0.0, num_mf_stab_checks=0,
                     corrpot_maxiter=50, orb_maxiter=50, chempot_tol=1e-6, corrpot_mf_moldens=0,doPDFT=None, PDFTgrid = 3):
 
-
         if isTranslationInvariant:
             raise RuntimeError ("The translational invariance option doesn't work!  It needs to be completely rebuilt!")
             assert( theInts.TI_OK == True )
@@ -522,7 +521,7 @@ class dmet:
         self.ints.enforce_symmetry = self.enforce_symmetry
         iteration = 0
         u_diff = 1.0
-        convergence_threshold = 1e-6
+        convergence_threshold = 1e-10  ###Tightened by riddhish
         self.check_fragment_symmetry_breaking (verbose=False, do_break=True)
         rdm = np.zeros ((self.norbs_tot, self.norbs_tot))
         print ("RHF energy =", self.ints.fullEhf)
@@ -564,7 +563,7 @@ class dmet:
         molden.from_mo (self.ints.mol, self.calcname + '_natorb.molden', ao2no, occ=no_occ, ene=no_ene)
         if (self.doPDFT != None) :
             las, h2eff_sub, veff_sub = self.lasci()
-            get_las_pdft(las, self.doPDFT, self.PDFTgrid)
+            get_las_pdft(las, self.ints.oneRDM_loc, self.doPDFT, self.PDFTgrid)
 
         return self.energy
 
@@ -575,7 +574,7 @@ class dmet:
         myiter = iters[-1][-1]
         nextiter = 0
         orb_diff = 1.0
-        convergence_threshold = 1e-5 if self.oldLASSCF else 1e-4
+        convergence_threshold = 1e-5 if self.oldLASSCF else 1e-5  ##Try to change this
         while (np.any (np.asarray (orb_diff) > convergence_threshold)):
             lower_iters = iters + [('orbs', nextiter)]
             orb_diff = self.doselfconsistent_orbs (lower_iters)
@@ -1187,7 +1186,7 @@ class dmet:
         lindeps = np.count_nonzero (evals < 1e-6)
         errstr = "{} linear dependencies found among {} active orbitals in guess construction".format (lindeps, loc2amo.shape[-1])
         if lindeps: 
-            if self.force_imp or len (guess_somos) == len (self.fragments):  RuntimeError (errstr)
+            if force_imp or len (guess_somos) == len (self.fragments):  RuntimeError (errstr) ##Riddhish removes the self. from self.force_imp. 
             else: warnings.warn (errstr, RuntimeWarning)
 
         return
@@ -1442,6 +1441,7 @@ class dmet:
         las = lasci.LASCI (mf, ncas_sub, nelecas_sub, spin_sub=spin_sub, wfnsym_sub=wfnsym_sub, frozen=frozen)
         e_tot, _, ci_sub, _, _, h2eff_sub, veff_sub = las.kernel (casdm0_sub = casdm0_sub)
         if not las.converged:
+            ##print ("\n YOU ARE RUNNING THE CALCULATION EVEN WHEN THE LASCI HAS NOT CONVERGED. ARE YOU OUT OF YOUR MIND OR SIMPLY DESPERATE FOR SOMETHING THAT DOES NOT CRASH??\n \n \n ")
             raise RuntimeError ("LASCI SCF cycle not converged")
         print ("LASCI module energy: {:.9f}".format (e_tot))
         print ("Time in LASCI module: {:.8f} wall, {:.8f} clock".format (time.time () - w0, time.clock () - t0))

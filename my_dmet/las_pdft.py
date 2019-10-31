@@ -17,7 +17,7 @@ from mrh.util.rdm import get_2CDM_from_2RDM, get_2CDMs_from_2RDMs
 from mrh.my_pyscf.mcpdft.otfnal import transfnal
 
 
-def get_las_pdft (las, my_ot, my_grid):
+def get_las_pdft (las, rdm, my_ot, my_grid):
 
 
     print ( 'you are doing a calculation using', my_ot)
@@ -31,11 +31,12 @@ def get_las_pdft (las, my_ot, my_grid):
 
     grids = dft.gen_grid.Grids(las.mol)
     grids.level = my_grid
-    otfnal.grids = grids 
-    e_tot, E_ot = kernel (las, otfnal)
+    otfnal.grids = grids
+    otfnal.verbose = 4 
+    e_tot, E_ot = kernel (las, rdm, otfnal)
     print ('Final LAS-PDFT energy is', e_tot, E_ot)
 
-def kernel (mc, ot, root=-1):
+def kernel (mc, rdm, ot, root=-1):
     ''' Calculate MC-PDFT total energy
 
         Args:
@@ -55,7 +56,6 @@ def kernel (mc, ot, root=-1):
     t0 = (time.clock (), time.time ())
     amo = mc.mo_coeff[:,mc.ncore:mc.ncore+mc.ncas]
     # make_rdm12s returns (a, b), (aa, ab, bb)
-
     if isinstance (mc.ci, list) and root >= 0:
         mc = mcscf.CASCI (mc._scf, mc.ncas, mc.nelecas)
         mc.fcisolver = fci.solver (mc._scf.mol, singlet = False, symm = False)
@@ -63,6 +63,7 @@ def kernel (mc, ot, root=-1):
         mc.ci = mc.ci[root]
         mc.e_tot = mc.e_tot
     dm1s = np.asarray ( mc.make_rdm1s () )
+###    dm1s = np.load ('/panfs/roc/groups/0/cramercj/pandh009/learning/dmet/LAS_PDFT/Test1/dm1s_cas.npy')
     adm1s = np.stack (mc.make_casdm1s () , axis=0 )
     adm2 =  get_2CDM_from_2RDM (mc.make_casdm2(), adm1s)
 #    if ot.verbose >= logger.DEBUG:
@@ -76,17 +77,26 @@ def kernel (mc, ot, root=-1):
     Vnn = mc._scf.energy_nuc ()
     h = mc._scf.get_hcore ()
     dm1 = dm1s[0] + dm1s[1]
+    print ('here',dm1 - rdm , np.trace(dm1) - np.trace(rdm))
+    np.save ('rdm_dm1_las', np.asarray (dm1 - rdm) )
     if ot.verbose >= logger.DEBUG or abs (hyb) > 1e-10:
         vj, vk = mc._scf.get_jk (dm=dm1s)
         vj = vj[0] + vj[1]
     else:
         vj = mc._scf.get_j (dm=dm1)
-
-
     Te_Vne = np.tensordot (h, dm1)
+    print ('here??')
+    np.set_printoptions(threshold=np.inf)
+    print (mc.ncore, mc.ncas)
+    np.save ('mo_coeff_las', np.asarray (mc.mo_coeff) )
+    np.save ('dm1s_las', np.asarray (dm1s) )
+    np.save ('adm2_las', np.asarray (adm2) )
+    print (np.trace(dm1s[0]) , np.trace(dm1s[1]) )
+
     # (vj_a + vj_b) * (dm_a + dm_b)
     E_j = np.tensordot (vj, dm1) / 2
     # (vk_a * dm_a) + (vk_b * dm_b) Mind the difference!
+    print ('ot.verbose and logger.DEBUG', ot.verbose, logger.DEBUG)
     if ot.verbose >= logger.DEBUG or abs (hyb) > 1e-10:
         E_x = -(np.tensordot (vk[0], dm1s[0]) + np.tensordot (vk[1], dm1s[1])) / 2
     else:
@@ -117,6 +127,7 @@ def kernel (mc, ot, root=-1):
     t0 = logger.timer (ot, 'Vnn, Te, Vne, E_j, E_x', *t0)
     E_ot = get_E_ot (ot, dm1s, adm2, amo)
     t0 = logger.timer (ot, 'E_ot', *t0)
+    print ('the split' , Te_Vne,  E_j , E_x)
     e_tot = Vnn + Te_Vne + E_j + (hyb * E_x) + E_ot
     logger.info (ot, 'MC-PDFT E = %s, Eot(%s) = %s', e_tot, ot.otxc, E_ot)
     return e_tot, E_ot
