@@ -1079,7 +1079,7 @@ class dmet:
         loc2amo_new = orthonormalize_a_basis (linalg.solve (self.ints.ao2loc, amo_new_coeff))
         occ_new, loc2amo_new = matrix_eigen_control_options (self.ints.oneRDM_loc, subspace=loc2amo_new, sort_vecs=-1,
             symmetry=self.ints.loc2symm, strong_symm=self.enforce_symmetry)[:2]
-        assert (np.all (reduce (np.logical_or, (occ_new < params.num_zero_rtol, np.isclose (occ_new, 1), np.isclose (occ_new, 2))))), 'New amos not integer-occupied: {}'.format (occ_new)
+        ### Riddhish comented this out  assert (np.all (reduce (np.logical_or, (occ_new < params.num_zero_rtol, np.isclose (occ_new, 1), np.isclose (occ_new, 2))))), 'New amos not integer-occupied: {}'.format (occ_new)
         occ_new = np.round (occ_new).astype (int)
 
         for f in self.fragments:
