@@ -3,8 +3,9 @@ import numpy as np
 from pyscf import ao2mo
 from pyscf.lib import current_memory, numpy_helper
 from pyscf.mcscf.mc1step import gen_g_hop
-from mrh.util.basis import represent_operator_in_basis, is_basis_orthonormal, measure_basis_olap, orthonormalize_a_basis, get_complementary_states, get_overlapping_states
+from mrh.util.basis import represent_operator_in_basis, is_basis_orthonormal, measure_basis_olap, orthonormalize_a_basis, get_complementary_states, get_overlapping_states, is_basis_orthonormal_and_complete
 from mrh.util.rdm import get_2CDM_from_2RDM
+from mrh.my_pyscf.df.sparse_df import sparsedf_array
 from scipy import linalg
 from itertools import product
 
@@ -159,7 +160,13 @@ class HessianCalculator (object):
 
     def _get_collective_basis (self, *args):
         p = np.concatenate (args, axis=-1)
-        q = orthonormalize_a_basis (p)
+        try: # Linear algebra problem sometimes if one of the arguments is a complete basis? Can I exception-handle my way out of this?
+            q = orthonormalize_a_basis (p)
+        except np.linalg.LinAlgError as e:
+            q = None
+            for r in args:
+                if is_basis_orthonormal_and_complete (r): q = r
+            if q is None: raise (e)
         qH = q.conjugate ().T
         q2p = [qH @ arg for arg in args]
         return q, q2p
@@ -276,11 +283,26 @@ class HessianCalculator (object):
         # Zero gradient escape
         if not np.count_nonzero (np.abs (e1) > 1e-8): return p, np.zeros (lp), q
         # Because this ^ is faster than sectioning it and even with 20+20+20 active/inactive/external, it's still only 100 MB
-        e2 = self.__call__(p, q, p, q)
-        e2 = np.diag (np.diag (e2.reshape (lpq, lpq)).reshape (lp, lq))
+        f_pp = np.stack ([((f @ p) * p).sum (0) for f in self.fock], 0)
+        f_qq = np.stack ([((f @ q) * q).sum (0) for f in self.fock], 0)
+        f_pq = np.stack ([((f @ p) * q).sum (0) for f in self.fock], 0)
+        d_pp = np.stack ([((d @ p) * p).sum (0) for d in self.oneRDMs], 0)
+        d_qq = np.stack ([((d @ q) * q).sum (0) for d in self.oneRDMs], 0)
+        d_pq = np.stack ([((d @ p) * q).sum (0) for d in self.oneRDMs], 0)
+        e2 = ((f_pp * d_qq) + (f_qq * d_pp) - 2 * (f_pq * d_pq)).sum (0)
+        #e2 = self.__call__(p, q, p, q)
+        #e2 = np.diag (np.diag (e2.reshape (lpq, lpq)).reshape (lp, lq))
         return p, -e1 / e2, q
 
+    def get_impurity_conjugate_gradient (self, i, c, a):
+        g, x_ga, a = self.get_diagonal_step (i, a)
+        Hop = self.get_operator (g, a)
+        iH = i.conjugate ().T
+        e2 = Hop (c, i, x_ga)
+        return c @ (self._get_Fock1 (c, i) - self._get_Fock1 (i, c).T + e2) @ iH
+
     def get_conjugate_gradient (self, pq_pairs, r, s):
+        ''' OLD CODE, NOT USED '''
         ''' Obtain the gradient for ranges p->q after making an approximate gradient-descent step in r->s:
         E1'^p_q = E1^p_q - E2^pr_qs * x^r_s = E1^p_q + E2^pr_qs * E1^r_s / E2^rr_ss '''
         t0, w0 = time.clock (), time.time ()
@@ -300,20 +322,19 @@ class HessianCalculator (object):
         #t0, w0 = time.clock (), time.time ()
         Hop = self.get_operator (r, s)
         #print ("Time to make Hop: {:.3f} s clock, {:.3f} wall".format (time.clock () - t0, time.time () - w0))
+        #p = self._get_collective_basis (pq_pairs[0][0], pq_pairs[1][0])[0]
+        #q = self._get_collective_basis (pq_pairs[0][1], pq_pairs[1][1])[0]
+        #qH = q.conjugate ().T
+        #e1_comp = p @ (self._get_Fock1 (p, q) - self._get_Fock1 (q, p).T + Hop (p, q, x_rs)) @ qH
         for p, q in pq_pairs:
-            #lp = p.shape[-1]
-            #lq = q.shape[-1]
             qH = q.conjugate ().T
-            #t0, w0 = time.clock (), time.time ()
-            #e2t = self.__call__(p, q, r, s).reshape (lp, lq, lr*ls)[:,:,diag_idx]
-            #print ("Time to get Hessian for this block: {:.3f} s clock, {:.3f} wall".format (time.clock () - t0, time.time () - w0))
-            #e2t = np.tensordot (e2t, x_rs, axes=1)
-            #t0, w0 = time.clock (), time.time ()
             e2 = Hop (p, q, x_rs)
-            #print ("Time to call Hop for this block: {:.3f} s clock, {:.3f} wall".format (time.clock () - t0, time.time () - w0))
-            #print ("Error of Hop: {:.6e} ({:.6e})".format (linalg.norm (e2t-e2)/e2.size, linalg.norm (e2)/e2.size))
             e1 += p @ e2 @ qH
             e2 = None
+        #for p, q in pq_pairs:
+        #    pH = p.conjugate ().T
+        #    errmat = pH @ (e1_comp - e1) @ q
+        #    print ("Error in jointly-calculated gradient: {}".format (linalg.norm (errmat)))
         return e1
 
     def get_veff (self, dm1s):
@@ -431,10 +452,17 @@ class CASSCFHessianTester (object):
 class LASSCFHessianCalculator (HessianCalculator):
 
     def get_operator (self, r, s):
-        return LASSCFHessianOperator (self, r, s)
+        if getattr (self.ints, 'with_df', None):
+            if self.Hop_noxc:
+                return DFLASSCFHessianOperator_noxc (self, r, s)
+            else:
+                return DFLASSCFHessianOperator (self, r, s)
+        else:
+            return LASSCFHessianOperator (self, r, s)
 
-    def __init__(self, ints, oneRDM_loc, all_frags, fock_c):
+    def __init__(self, ints, oneRDM_loc, all_frags, fock_c, fock_s, Hop_noxc=False):
         self.ints = ints
+        self.Hop_noxc = Hop_noxc
         active_frags = [f for f in all_frags if f.norbs_as]
 
         # Global things. fock_s is zero because of the semi-cumulant decomposition; this only works because I
@@ -443,8 +471,9 @@ class LASSCFHessianCalculator (HessianCalculator):
         self.mo = self.moH = self.Smo = self.moHS = np.eye (self.nmo)
         oneSDM_loc = sum ([f.oneSDMas_loc for f in active_frags])
         self.oneRDMs = [(oneRDM_loc + oneSDM_loc)/2, (oneRDM_loc - oneSDM_loc)/2]
-        fock_c = ints.loc_rhf_fock_bis (oneRDM_loc)
-        fock_s = -ints.loc_rhf_k_bis (oneSDM_loc) / 2 if isinstance (oneSDM_loc, np.ndarray) else 0
+        #fock_c = ints.loc_rhf_fock_bis (oneRDM_loc)
+        #fock_s = -ints.loc_rhf_k_bis (oneSDM_loc) / 2 if isinstance (oneSDM_loc, np.ndarray) else 0
+        #print ("Error: {} charge; {} spin".format (linalg.norm (fock_c - fock_c_check), linalg.norm (fock_s - fock_s_check)))
         self.fock = [fock_c + fock_s, fock_c - fock_s]
 
         # Fragment things
@@ -472,9 +501,48 @@ class LASSCFHessianCalculator (HessianCalculator):
         moH = mo.conjugate ().T
         dm1s = np.dot (mo, np.dot (dm1s, moH)).transpose (1,0,2)
         vj, vk = self.ints.get_jk_ao (dm=dm1s)
+        # Note: the below _works_!
+        #dm = dm1s.sum (0)
+        #dm += dm.T
+        #dm[np.diag_indices_from (dm)] /= 2
+        #dm = numpy_helper.pack_tril (dm)
+        #vj_test = np.zeros_like (vj.sum (0))
+        #for eri1 in self.ints.with_df.loop ():
+        #    rho = np.dot (eri1, dm)
+        #    vj_test += numpy_helper.unpack_tril (np.dot (rho, eri1))
+        #    print (vj_test)
+        #print ("Comparing vj to manual vj recalculation using cderi: {}".format (vj.sum (0) - vj_test))
         vj = np.dot (moH, np.dot (vj, mo)).transpose (1,0,2)
         vk = np.dot (moH, np.dot (vk, mo)).transpose (1,0,2)
         return vj, vk
+
+    def get_diagonal_step (self, p, q):
+        ''' Obtain a gradient-descent approximation for the relaxation of orbitals p in range q using the gradient and
+        diagonal elements of the Hessian, x^p_q = -E1^p_q / E2^pp_qq '''
+        # First, get the gradient and svd to obtain conjugate orbitals of p in q
+        grad = self._get_Fock1 (p, q) - self._get_Fock1 (q, p).T
+        lvec, e1, rvecH = linalg.svd (grad, full_matrices=False)
+        rvec = rvecH.conjugate ().T
+        p = p @ lvec
+        q = q @ rvec
+        lp = p.shape[-1]
+        lq = q.shape[-1]
+        lpq = lp * lq
+        # Zero gradient escape
+        if not np.count_nonzero (np.abs (e1) > 1e-8): return p, np.zeros (lp), q
+        # Because this ^ is faster than sectioning it and even with 20+20+20 active/inactive/external, it's still only 100 MB
+        if self.Hop_noxc:
+            f_pp = np.stack ([((f @ p) * p).sum (0) for f in self.fock], 0)
+            f_qq = np.stack ([((f @ q) * q).sum (0) for f in self.fock], 0)
+            f_pq = np.stack ([((f @ p) * q).sum (0) for f in self.fock], 0)
+            d_pp = np.stack ([((d @ p) * p).sum (0) for d in self.oneRDMs], 0)
+            d_qq = np.stack ([((d @ q) * q).sum (0) for d in self.oneRDMs], 0)
+            d_pq = np.stack ([((d @ p) * q).sum (0) for d in self.oneRDMs], 0)
+            e2 = ((f_pp * d_qq) + (f_qq * d_pp) - 2 * (f_pq * d_pq)).sum (0)
+        else:
+            e2 = self.__call__(p, q, p, q)
+            e2 = np.diag (np.diag (e2.reshape (lpq, lpq)).reshape (lp, lq))
+        return p, -e1 / e2, q
 
 class HessianERITransformer (object):
 
@@ -492,32 +560,38 @@ class HessianERITransformer (object):
         '''
         p,q,r,s = (parent._append_entangled (z) for z in (p,q,r,s))
         a = np.concatenate (parent.mo2amo, axis=1)
-        self.w = w = orthonormalize_a_basis (np.concatenate ([a, p], axis=1))
-        self.x = x = orthonormalize_a_basis (np.concatenate ([a, s, r, q], axis=1)) 
-        self.y = y = orthonormalize_a_basis (np.concatenate ([a, s, r], axis=1))
-        self.z = z = orthonormalize_a_basis (np.concatenate ([a, s, q], axis=1))
+        self.w = w = parent._get_collective_basis (a, p)[0]
+        self.x = x = parent._get_collective_basis (a, s, r, q)[0] 
+        self.y = y = parent._get_collective_basis (a, s, r)[0]
+        self.z = z = parent._get_collective_basis (a, s, q)[0]
         self._eri = parent._get_eri ([w,x,y,z])
         return
 
-    def __call__(self, p, q, r, s):
+    def __call__(self, p, q, r, s, _first_call=True):
         ''' Because of several necessary index permutations, I cannot know in advance which of w,x,y,z
         encloses each of p, q, r, s, but I should have prepared it so that any call I make can be carried out.
         yz is the more restrictive pair in my cache, so first see if r, s is in yz and if not, flip pq<->rs.
         wx contains all pairs that I should ever need so. ''' 
         rs_yz, rs_correct = self.pq_in_cd (self.y, self.z, r, s)
-        if not (rs_yz): return self.__call__(r, s, p, q).transpose (2, 3, 0, 1)
         pq_wx, pq_correct = self.pq_in_cd (self.w, self.x, p, q)
+        if _first_call and (not (pq_wx and rs_yz)): return self.__call__(r, s, p, q, _first_call=False).transpose (2, 3, 0, 1)
         try:
-            assert (pq_wx), 'pq or rs not found in wx (wx is supposed to span ~all~ possible orbital pairs you ever ask for)'
+            assert (pq_wx and rs_yz), "Can't place orbital sets in this eri array"
         except AssertionError as e:
             print (p.shape, q.shape, r.shape, s.shape)
             print (self.w.shape, self.x.shape, self.y.shape, self.z.shape)
-            print (linalg.svd(self.w.conjugate ().T @ p)[1])
-            print (linalg.svd(self.x.conjugate ().T @ q)[1])
-            print (linalg.svd(self.x.conjugate ().T @ p)[1])
-            print (linalg.svd(self.w.conjugate ().T @ q)[1])
+            for name1, arr1 in zip (('w','x','y','z'), (self.w, self.x, self.y, self.z)):
+                for name2, arr2 in zip (('p','q','r','s'), (p, q, r, s)):
+                    print ("Is {} in {}? {}".format (name2, name1, self.p_in_c (arr1, arr2, _return_numbers=True)))
+            print ("Is p orthonormal? {}".format (linalg.eigh (p.conjugate ().T @ p)[0]))
+            print ("Is q orthonormal? {}".format (linalg.eigh (q.conjugate ().T @ q)[0]))
+            print ("Is r orthonormal? {}".format (linalg.eigh (r.conjugate ().T @ r)[0]))
+            print ("Is s orthonormal? {}".format (linalg.eigh (s.conjugate ().T @ s)[0]))
+            print ("Is w orthonormal? {}".format (linalg.eigh (self.w.conjugate ().T @ self.w)[0]))
+            print ("Is x orthonormal? {}".format (linalg.eigh (self.x.conjugate ().T @ self.x)[0]))
+            print ("Is y orthonormal? {}".format (linalg.eigh (self.y.conjugate ().T @ self.y)[0]))
+            print ("Is z orthonormal? {}".format (linalg.eigh (self.z.conjugate ().T @ self.z)[0]))
             raise (e)
-        assert (rs_yz), 'pq not found in either wx or yz'
         # Permute the order of the pairs individually
         if pq_correct and rs_correct: return self._grind (p, q, r, s)
         elif pq_correct: return self._grind (p, q, s, r).transpose (0, 1, 3, 2)
@@ -539,10 +613,12 @@ class HessianERITransformer (object):
         pqrs = np.tensordot (pqrs, z2s, axes=((1),(0)))
         return pqrs
 
-    def p_in_c (self, c, p):
+    def p_in_c (self, c, p, _return_numbers=False):
         ''' Return c == complete basis for p '''
         svals = linalg.svd (c.conjugate ().T @ p)[1]
-        return np.count_nonzero (np.isclose (svals, 1)) == p.shape[1]
+        val = np.count_nonzero (np.isclose (svals, 1, rtol=1e-3)) == p.shape[1]
+        if _return_numbers: return val, svals-1, p.shape[1]
+        else: return val
 
     def pq_in_cd (self, c, d, p, q):
         testmat = np.asarray ([[self.p_in_c (e, r) for e in (c, d)] for r in (p, q)])
@@ -561,7 +637,7 @@ class HessianOperator (HessianCalculator):
         a = np.concatenate (self.mo2amo, axis=-1)
         do_r = sum (abs (linalg.svd (sH @ a)[1])) > 1e-8
         do_s = sum (abs (linalg.svd (rH @ a)[1])) > 1e-8
-        if do_r and do_s: self.k = k = self._get_collective_basis (self.r, self.s)
+        if do_r and do_s: self.k = k = self._get_collective_basis (self.r, self.s)[0]
         elif do_r: self.k = k = r
         elif do_s: self.k = k = s
         i = np.eye (self.nmo)
@@ -623,4 +699,113 @@ class LASSCFHessianOperator (LASSCFHessianCalculator, HessianOperator):
     __init__ = HessianOperator.__init__
     __call__ = HessianOperator.__call__
 
+class DFLASSCFHessianOperator (LASSCFHessianOperator):
+    def __init__(self, calculator, r, s):
+        self.__dict__.update (calculator.__dict__)
+        self.r = r
+        self.s = s
+        self.rs = self._get_collective_basis (r, s)[0]
+        self.m2rs = self.ints.ao2loc @ self.rs
+
+    def _get_tFock1_1b (self, kappa):
+        # Do only strictly 1-body part; no veff here
+        tdm1s = np.stack ([kappa @ dm - dm @ kappa for dm in self.oneRDMs], axis=0)
+        return np.tensordot (self.fock, tdm1s, axes=((0,1),(0,2)))
+        
+    def _get_tFock1_2b (self, p, q, kappa):
+        ''' This assumes that p and q are unentangled subspaces, that p has no active orbitals, that
+        r,s contains only full active subspaces, and that r,s are contained entirely in exactly one of p,q!'''
+        # Include veff terms here by reusing intermediates
+        # Include both F_pq and F_qp!
+        m2p = self.ints.ao2loc @ p
+        m2q = self.ints.ao2loc @ q
+        m2r = self.m2rs
+        p2m = m2p.conjugate ().T
+        q2m = m2q.conjugate ().T
+        r2m = m2r.conjugate ().T
+        qH = q.conjugate ().T
+        rsH = self.rs.conjugate ().T
+        rs2q = r2q = rsH @ q
+        q2rs = q2r = rs2q.conjugate ().T
+        svals_rinq = linalg.svd (rs2q)[1].sum ()
+        rs2p = rsH @ p
+        svals_rinp = linalg.svd (rs2p)[1].sum ()
+        rinq = abs (svals_rinq - self.rs.shape[-1]) < 1e-5
+        rinp = abs (svals_rinp - self.rs.shape[-1]) < 1e-5
+        if rinp:
+            return np.zeros ((p.shape[-1], q.shape[-1])) # Hack to keep both F_pq and F_qp in the rinq case
+        elif not rinq:
+            raise RuntimeError ("Totally off-diagonal Hessian elements not supported ({} {} {})".format (svals_rinq, svals_rinp, self.rs.shape[-1]))
+        tdm1s = np.stack ([kappa @ dm - dm @ kappa for dm in self.oneRDMs], axis=0)
+        tdm1s = np.dot (qH, np.dot (tdm1s, q)).transpose (1,0,2) # Put in q (impurity) basis
+        pH = p.conjugate ().T
+        qH = q.conjugate ().T
+        dm_pp = np.dot (pH, np.dot (self.oneRDMs, p)).transpose (1,0,2)
+        dm_qq = np.dot (qH, np.dot (self.oneRDMs, q)).transpose (1,0,2)
+        b_mqP = sparsedf_array (self.ints.with_df._cderi).contract1 (m2q)
+        b_rqP = np.tensordot (m2r, b_mqP, axes=((0),(0)))
+        g_mqrq = np.tensordot (b_mqP, b_rqP, axes=((2),(2)))
+        tdm_qr = np.dot (tdm1s, r2q.conjugate ().T)
+        # Coulomb
+        vj_pq = p2m @ (np.tensordot (g_mqrq, tdm_qr.sum (0).T, axes=2))
+        # Exchange
+        vk_pq = np.dot (p2m, np.tensordot (tdm_qr, g_mqrq, axes=((1,2),(1,2)))).transpose (1,0,2)
+        # Veff 
+        veff_pq = vj_pq[None,:,:] - vk_pq
+        tFock1 = np.tensordot (veff_pq, dm_qq, axes=((0,2),(0,1))) - np.tensordot (dm_pp, veff_pq, axes=((0,1),(0,1)))
+        # Cumulant
+        g_mrrr = np.tensordot (r2q, np.dot (g_mqrq, q2r), axes=((1),(1))).transpose (1,0,2,3)
+        for t, a, n in zip (self.twoCDM, self.mo2amo, self.ncas):
+            rs2a = rsH @ a
+            if linalg.norm (rs2a) < 1e-8: continue
+            l_rrrr = np.tensordot (rs2a, t,      axes=((1),(1))) # (ar|aa) (idx's 0 and 1 are now switched)
+            l_rrrr = np.tensordot (rs2a, l_rrrr, axes=((1),(1))) # (rr|aa) (calling idx 1 gets idx 0)
+            l_rrrr = np.tensordot (l_rrrr, rs2a, axes=((2),(1))) # (rr|ra) (idx's 2 and 3 are now switched)
+            l_rrrr = np.tensordot (l_rrrr, rs2a, axes=((2),(1))) # (rr|rr) (calling idx 2 gets idx 3)
+            rKr = rsH @ kappa @ self.rs
+            # This is a sum, so I can't do the index-order switching thing I did above
+            # It's always positive as long as I always contract the ~second~ axis of rKr
+            lk_rrrr  = np.tensordot (rKr, l_rrrr, axes=((1),(0))) 
+            lk_rrrr += np.tensordot (rKr, l_rrrr, axes=((1),(1))).transpose (1,0,2,3) 
+            lk_rrrr += np.tensordot (l_rrrr, rKr, axes=((3),(1))) 
+            lk_rrrr += np.tensordot (l_rrrr, rKr, axes=((2),(1))).transpose (0,1,3,2)
+            tF_mr = np.tensordot (g_mrrr, lk_rrrr, axes=((1,2,3),(1,2,3)))
+            tFock1 += (p2m @ tF_mr @ rs2q) - (q2m @ tF_mr @ rs2p).T
+        return tFock1
+        
+class DFLASSCFHessianOperator_noxc (DFLASSCFHessianOperator):
+    ''' Approximate the Hessian by omitting the response of the exchange potential and correlation part of the gradient, leaving only
+    the one-body density and Coulomb responses. '''
+
+    def _get_tFock1_2b (self, p, q, kappa):
+        rsH = self.rs.conjugate ().T
+        rs2q = r2q = rsH @ q
+        q2rs = q2r = rs2q.conjugate ().T
+        svals_rinq = linalg.svd (rs2q)[1].sum ()
+        rs2p = rsH @ p
+        svals_rinp = linalg.svd (rs2p)[1].sum ()
+        rinq = abs (svals_rinq - self.rs.shape[-1]) < 1e-5
+        rinp = abs (svals_rinp - self.rs.shape[-1]) < 1e-5
+        if rinp:
+            return np.zeros ((p.shape[-1], q.shape[-1])) # Hack to keep both F_pq and F_qp in the rinq case
+        elif not rinq:
+            raise RuntimeError ("Totally off-diagonal Hessian elements not supported ({} {} {})".format (svals_rinq, svals_rinp, self.rs.shape[-1]))
+        m2p = self.ints.ao2loc @ p
+        m2q = self.ints.ao2loc @ q
+        p2m = m2p.conjugate ().T
+        ao2loc = self.ints.ao2loc
+        loc2ao = ao2loc.conjugate ().T
+        dm1 = self.oneRDMs[0] + self.oneRDMs[1]
+        tdm1 = ao2loc @ (kappa @ dm1 - dm1 @ kappa) @ loc2ao
+        tdm1 = numpy_helper.pack_tril (tdm1 + tdm1.T - np.diag (np.diag (tdm1)))      
+        vj_pq = np.zeros ((p.shape[-1], q.shape[-1]), dtype=tdm1.dtype)
+        for cderi in self.ints.with_df.loop ():
+            rho = np.dot (cderi, tdm1)
+            vj_pq += p2m @ numpy_helper.unpack_tril (np.dot (rho, cderi)) @ m2q
+        pH = p.conjugate ().T
+        qH = q.conjugate ().T
+        dm1_pp = pH @ dm1 @ p
+        dm1_qq = qH @ dm1 @ q
+        tFock1 = vj_pq @ dm1_qq - dm1_pp @ vj_pq
+        return tFock1
 

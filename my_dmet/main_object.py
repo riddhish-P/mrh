@@ -36,6 +36,7 @@ from pyscf.gto import mole, same_mol
 from pyscf.tools import molden
 from pyscf.symm.addons import symmetrize_space
 from pyscf.scf.addons import project_mo_nr2nr, project_dm_nr2nr
+from pyscf.fci.addons import transform_ci_for_orbital_rotation
 from pyscf.lib.numpy_helper import unpack_tril
 from mrh.util import params
 from mrh.util.io import prettyprint_ndarray as prettyprint
@@ -58,7 +59,7 @@ class dmet:
                     minFunc='FOCK_INIT', print_u=True,
                     print_rdm=True, debug_energy=False, debug_reloc=False, oldLASSCF=False,
                     nelec_int_thresh=1e-6, chempot_init=0.0, num_mf_stab_checks=0,
-                    corrpot_maxiter=50, orb_maxiter=50, chempot_tol=1e-6, corrpot_mf_moldens=0,doPDFT=None, PDFTgrid = 3):
+                    corrpot_maxiter=50, orb_maxiter=50, chempot_tol=1e-6, corrpot_mf_moldens=0, do_conv_molden=False, doPDFT=None, PDFTgrid = 3):
 
         if isTranslationInvariant:
             raise RuntimeError ("The translational invariance option doesn't work!  It needs to be completely rebuilt!")
@@ -105,6 +106,7 @@ class dmet:
         self.oldLASSCF                = oldLASSCF
         self.doPDFT                   = doPDFT
         self.PDFTgrid                 = PDFTgrid
+        self.do_conv_molden           = do_conv_molden
         for frag in self.fragments:
             frag.debug_energy             = debug_energy
             frag.num_mf_stab_checks       = num_mf_stab_checks
@@ -545,16 +547,17 @@ class dmet:
         if self.debug_energy:
             debug_Etot (self)
 
-        for frag in self.fragments:
-            if not (frag.imp_solver_name == 'dummy RHF'):
-                if self.doLASSCF: frag.do_Schmidt (self.ints.oneRDM_loc, self.fragments, self.ints.loc2idem, True)
-                fmt_str = "Writing {}".format (frag.frag_name) + " {} orbital molden"
-                print (fmt_str.format ('natural'))
-                frag.impurity_molden ('natorb', natorb=True)
-                print (fmt_str.format ('impurity'))
-                frag.impurity_molden ('imporb')
-                print (fmt_str.format ('molecular'))
-                frag.impurity_molden ('molorb', molorb=True)
+        if self.do_conv_molden:
+            for frag in self.fragments:
+                if not (frag.imp_solver_name == 'dummy RHF'):
+                    if self.doLASSCF: frag.do_Schmidt (self.ints.oneRDM_loc, self.fragments, self.ints.loc2idem, True)
+                    fmt_str = "Writing {}".format (frag.frag_name) + " {} orbital molden"
+                    print (fmt_str.format ('natural'))
+                    frag.impurity_molden ('natorb', natorb=True)
+                    print (fmt_str.format ('impurity'))
+                    frag.impurity_molden ('imporb')
+                    print (fmt_str.format ('molecular'))
+                    frag.impurity_molden ('molorb', molorb=True)
         rdm = self.transform_ed_1rdm (get_od=True)
         no_occs, no_evecs = matrix_eigen_control_options (rdm, sort_vecs=-1, only_nonzero_vals=False)
         ao2no, no_ene, no_occ = self.get_las_nos (aobasis=True, oneRDM_loc=rdm, jmol_shift=True, try_symmetrize=True)
@@ -740,9 +743,9 @@ class dmet:
         print ("Whole-molecule energy difference = {}".format (Eiter))
 
         # Safety until I figure out how to deal with this degenerate-orbital thing
-        if abs (Eiter) < 1e-7 and np.all (np.abs (energies - self.energy) < 1e-7):
-            print ("Energies all converged to 100 nanoEh threshold; punking out of 1-RDM and orbital convergence")
-            orb_diff = oneRDM_diff = 0
+        # if abs (Eiter) < 1e-7 and np.all (np.abs (energies - self.energy) < 1e-7):
+        #    print ("Energies all converged to 100 nanoEh threshold; punking out of 1-RDM and orbital convergence")
+        #    orb_diff = oneRDM_diff = 0
         
         if self.oldLASSCF: return orb_diff, oneRDM_diff, Eimp_stdev, abs (Eiter)
         else: return norm_gorb, norm_gci
@@ -820,6 +823,8 @@ class dmet:
             interr = np.eye (loc2amo.shape[1]) * interr / loc2amo.shape[1]
             oneRDM_loc -= reduce (np.dot, [loc2amo, interr, loc2amo.conjugate ().T])
         #assert (all ((i < self.nelec_int_thresh for i in interrs))), "Fragment with non-integer number of electrons appears"  ##Riddhish deleted assert statement
+        if ((not self.doLASSCF) or self.oldLASSCF):
+            assert (all ((i < self.nelec_int_thresh for i in interrs))), "Fragment with non-integer number of electrons appears"
     
         # Evaluate the entanglement of the active subspaces
         for (o1, f1), (o2, f2) in combinations (zip (loc2wmas, self.fragments), 2):
@@ -1402,6 +1407,7 @@ class dmet:
         casdm0_sub = []
         spin_sub = []
         wfnsym_sub = []
+        ci0 = []
         for f in active_frags:
             amo = loc2amo[:,:f.norbs_as]
             print ("Occupancy here: ",amo_occ[:f.norbs_as])
@@ -1419,44 +1425,41 @@ class dmet:
             casdm0_sub.append (np.stack ([dma, dmb], axis=0))
             spin_sub.append (int (round ((2 * abs (f.target_S)) + 1)))
             wfnsym_sub.append (f.wfnsym)
+            if f.ci_as is not None:
+                umat = f.ci_as_orb.conjugate ().T @ amo
+                ci0.append (transform_ci_for_orbital_rotation (f.ci_as, f.norbs_as, (neleca,nelecb), umat))
         w0, t0 = time.time (), time.clock ()
-        mol = self.ints.mol.copy ()
-        if self.lasci_log is None: mol.output = self.calcname + '_lasci.log'
-        mol.verbose = pyscf_logger.DEBUG
-        mol.build ()
         if self.lasci_log is None: 
+            mol = self.ints.mol.copy ()
+            mol.output = self.calcname + '_lasci.log'
+            mol.build ()
             self.lasci_log = mol.stdout
-        else:
-            mol.stdout = self.lasci_log
-        mf = scf.RHF (mol)
-        if self.ints.x2c: mf = mf.sfx2c1e ()
-        mf._eri = self.ints._eri
-        if getattr (self.ints, 'with_df', None):
-            mf = mf.density_fit (auxbasis = self.ints.with_df.auxbasis, with_df = self.ints.with_df)
-        mf.max_cycle = 1 
-        mf.kernel ()
-        mf.mo_coeff = ao2no
-        mf.mo_energy = no_ene
-        mf.mo_occ = no_occ
         frozen = np.arange (ncore, sum(ncas_sub)+ncore, dtype=np.int32) if self.oldLASSCF else None
-        las = lasci.LASCI (mf, ncas_sub, nelecas_sub, spin_sub=spin_sub, wfnsym_sub=wfnsym_sub, frozen=frozen)
-        e_tot, _, ci_sub, _, _, h2eff_sub, veff_sub = las.kernel (casdm0_sub = casdm0_sub)
+        las = lasci.LASCI (self.ints._scf, ncas_sub, nelecas_sub, spin_sub=spin_sub, wfnsym_sub=wfnsym_sub, frozen=frozen)
+        print ("Time preparing LASCI object: {:.8f} wall, {:.8f} clock".format (time.time () - w0, time.clock () - t0))
+        w0, t0 = time.time (), time.clock ()
+        las.stdout = self.lasci_log
+        if all ([x is not None] for x in ci0) and len (ci0) == len (casdm0_sub):
+            casdm0_sub = None
+        else:
+            ci0 = None
+        e_tot, _, ci_sub, _, _, h2eff_sub, veff = las.kernel (mo_coeff = ao2no, ci0 = ci0, casdm0_sub = casdm0_sub)
         if not las.converged:
             print ("\n YOU ARE RUNNING THE CALCULATION EVEN WHEN THE LASCI HAS NOT CONVERGED. ARE YOU OUT OF YOUR MIND OR SIMPLY DESPERATE FOR SOMETHING THAT DOES NOT CRASH??\n \n \n ")
             ##raise RuntimeError ("LASCI SCF cycle not converged")
         print ("LASCI module energy: {:.9f}".format (e_tot))
         print ("Time in LASCI module: {:.8f} wall, {:.8f} clock".format (time.time () - w0, time.clock () - t0))
-        return las, h2eff_sub, veff_sub
+        return las, h2eff_sub, veff
 
     def lasci_ (self, dm0=None, loc2wmas=None):
         ''' Do LASCI and then also update the fragment and ints object '''
-        las, h2eff_sub, veff_sub = self.lasci (dm0=dm0, loc2wmas=loc2wmas)
+        las, h2eff_sub, veff = self.lasci (dm0=dm0, loc2wmas=loc2wmas)
         aoSloc = self.ints.ao_ovlp @ self.ints.ao2loc
         locSao = aoSloc.conjugate ().T
         oneRDMs_loc_sub = np.dot (locSao, np.dot (las.make_rdm1s_sub (), aoSloc)).transpose (1,2,0,3)
         loc2mo = locSao @ las.mo_coeff
         active_frags = [f for f in self.fragments if f.norbs_as]
-        self.ints.update_from_lasci_(self.calcname, las, loc2mo, oneRDMs_loc_sub.sum (0))
+        self.ints.update_from_lasci_(self.calcname, las, loc2mo, oneRDMs_loc_sub.sum (0), veff)
         loc2amo_sub = [las.get_mo_slice (idx, mo_coeff=loc2mo) for idx in range (len (active_frags))]
         eri_gradient = unpack_tril (h2eff_sub.reshape ((las.mo_coeff.shape[-1]*las.ncas, -1)))
         eri_gradient = eri_gradient.reshape ((las.mo_coeff.shape[-1], las.ncas, las.ncas, las.ncas))
@@ -1479,11 +1482,11 @@ class dmet:
             f.twoCDMimp_amo = get_2CDM_from_2RDM (casdm2, casdm1)
             casdm1s = np.stack ([loc2amo.conjugate ().T @ dm @ loc2amo for dm in oneRDMs_amo_loc], axis=0)
             casdm2c = get_2CDM_from_2RDM (casdm2, casdm1s)
-            eri = self.ints.dmet_tei (f.loc2amo)
-            f.E2_cum = (casdm2c * eri).sum () / 2
             # Cache gradient-related eri...
             i = sum (las.ncas_sub[:ix])
             j = i + las.ncas_sub[ix]
             f.eri_gradient = eri_gradient[:,i:j,i:j,i:j]
-        return las.e_tot, las.get_grad (h2eff_sub=h2eff_sub, veff_sub=veff_sub)
+            eri = np.tensordot (loc2amo.conjugate (), f.eri_gradient, axes=((0),(0)))
+            f.E2_cum = (casdm2c * eri).sum () / 2
+        return las.e_tot, las.get_grad (h2eff_sub=h2eff_sub, veff=veff)
 

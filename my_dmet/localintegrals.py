@@ -55,6 +55,7 @@ class localintegrals:
         
         # Information on the full HF problem
         self.mol         = the_mf.mol
+        self._scf        = the_mf
         self.max_memory  = the_mf.max_memory
         self.get_jk_ao   = partial (the_mf.get_jk, self.mol)
         self.get_veff_ao = partial (the_mf.get_veff, self.mol)
@@ -138,6 +139,7 @@ class localintegrals:
         self.activeCONST    = self.mol.energy_nuc() + np.einsum( 'ij,ij->', self.frozenOEI_ao - 0.5*self.frozenJK_ao, self.frozenDM_ao )
         self.activeOEI      = represent_operator_in_basis (self.frozenOEI_ao, self.ao2loc )
         self.activeFOCK     = represent_operator_in_basis (self.fullFOCK_ao,  self.ao2loc )
+        self.activeVSPIN    = np.zeros_like (self.activeFOCK) # FIXME: correct behavior for ROHF init!
         self.activeJKidem   = self.activeFOCK - self.activeOEI
         self.activeJKcorr   = np.zeros ((self.norbs_tot, self.norbs_tot), dtype=self.activeOEI.dtype)
         self.oneRDM_loc     = self.ao2loc.conjugate ().T @ self.ao_ovlp @ self.fullRDM_ao @ self.ao_ovlp @ self.ao2loc
@@ -386,7 +388,7 @@ class localintegrals:
         E += (vk * oneSDM_loc).sum ()/2
         self._cache_and_analyze_(calcname, E, focka_fockb, dma_dmb, JKidem, JKcorr, oneRDMcorr_loc, loc2idem, loc2corr, nelec_idem, oneRDM_loc, oneSDM_loc)
 
-    def update_from_lasci_(self, calcname, las, loc2mo, dma_dmb):
+    def update_from_lasci_(self, calcname, las, loc2mo, dma_dmb, veff):
         dma, dmb = dma_dmb # Not sure if this is OK with ndarray
         loc2core = loc2mo[:,:las.ncore]
         loc2corr = loc2mo[:,las.ncore:][:,:las.ncas]
@@ -394,8 +396,13 @@ class localintegrals:
         oneRDMcorr_loc = dma + dmb
         oneRDM_loc = oneRDMidem_loc + oneRDMcorr_loc
         oneSDM_loc = dma - dmb
-        JKidem, JKcorr = (self.loc_rhf_jk_bis (dm) for dm in (oneRDMidem_loc, oneRDMcorr_loc))
-        vk = -self.loc_rhf_k_bis (oneSDM_loc) / 2
+        #JKidem, JKcorr = (self.loc_rhf_jk_bis (dm) for dm in (oneRDMidem_loc, oneRDMcorr_loc))
+        #vk = -self.loc_rhf_k_bis (oneSDM_loc) / 2
+        ao2loc = self.ao2loc
+        loc2ao = ao2loc.conjugate ().T
+        JKidem = loc2ao @ veff.veff_c @ ao2loc
+        JKcorr = (loc2ao @ (veff.sum (0)/2) @ ao2loc) - JKidem
+        vk = loc2ao @ ((veff[0] - veff[1])/2) @ ao2loc
         focka_fockb = self.activeOEI + JKidem + JKcorr
         focka_fockb = [focka_fockb + vk, focka_fockb - vk] 
         idx = np.zeros (loc2mo.shape[-1], dtype=np.bool_)
@@ -410,7 +417,8 @@ class localintegrals:
         ########################################################################################################        
         self.e_tot          = E
         self.activeVSPIN    = (focka_fockb[0] - focka_fockb[1]) / 2
-        self.activeFOCK     = get_roothaan_fock (focka_fockb, dma_dmb, np.eye (self.norbs_tot))
+        #self.activeFOCK     = get_roothaan_fock (focka_fockb, dma_dmb, np.eye (self.norbs_tot))
+        self.activeFOCK     = (focka_fockb[0] + focka_fockb[1]) / 2
         self.activeJKidem   = JKidem
         self.activeJKcorr   = JKcorr
         self.oneRDMcorr_loc = oneRDMcorr_loc
