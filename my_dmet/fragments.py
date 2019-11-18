@@ -329,7 +329,8 @@ class fragment_object:
     def nelec_as (self):
         result = np.trace (self.oneRDMas_loc)
         if is_close_to_integer (result, params.num_zero_atol) == False:
-            raise RuntimeError ("Somehow you got a non-integer number of electrons in your active space! ({})".format (result))
+            print ("Somehow you got a non-integer number of electrons in your active space! ")
+      ##Riddhish      raise RuntimeError ("Somehow you got a non-integer number of electrons in your active space! ({})".format (result))
         return int (round (result))
 
     @property

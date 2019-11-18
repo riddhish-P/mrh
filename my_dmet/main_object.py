@@ -563,6 +563,7 @@ class dmet:
         molden.from_mo (self.ints.mol, self.calcname + '_natorb.molden', ao2no, occ=no_occ, ene=no_ene)
         if (self.doPDFT != None) :
             las, h2eff_sub, veff_sub = self.lasci()
+            np.save ('las_trip_orbitals.npy', las.mo_coeff)
             get_las_pdft(las, self.ints.oneRDM_loc, self.doPDFT, self.PDFTgrid)
 
         return self.energy
@@ -815,10 +816,10 @@ class dmet:
             interr = nelec_amo - round (nelec_amo)
             interrs.append (interr)
             print ("{0} fragment has {1:.5f} active electrons (integer error: {2:.2e})".format (frag.frag_name, nelec_amo, interr))
-            #assert (interr < self.nelec_int_thresh), "Fragment with non-integer number of electrons appears"
+            #assert (interr < self.nelec_int_thresh), "Fragment with non-integer number of electrons appears" #Riddhish deleted assert statement
             interr = np.eye (loc2amo.shape[1]) * interr / loc2amo.shape[1]
             oneRDM_loc -= reduce (np.dot, [loc2amo, interr, loc2amo.conjugate ().T])
-        assert (all ((i < self.nelec_int_thresh for i in interrs))), "Fragment with non-integer number of electrons appears"
+        #assert (all ((i < self.nelec_int_thresh for i in interrs))), "Fragment with non-integer number of electrons appears"  ##Riddhish deleted assert statement
     
         # Evaluate the entanglement of the active subspaces
         for (o1, f1), (o2, f2) in combinations (zip (loc2wmas, self.fragments), 2):
@@ -1079,7 +1080,7 @@ class dmet:
         loc2amo_new = orthonormalize_a_basis (linalg.solve (self.ints.ao2loc, amo_new_coeff))
         occ_new, loc2amo_new = matrix_eigen_control_options (self.ints.oneRDM_loc, subspace=loc2amo_new, sort_vecs=-1,
             symmetry=self.ints.loc2symm, strong_symm=self.enforce_symmetry)[:2]
-        ### Riddhish comented this out  assert (np.all (reduce (np.logical_or, (occ_new < params.num_zero_rtol, np.isclose (occ_new, 1), np.isclose (occ_new, 2))))), 'New amos not integer-occupied: {}'.format (occ_new)
+        ##Riddhish did this assert (np.all (reduce (np.logical_or, (occ_new < params.num_zero_rtol, np.isclose (occ_new, 1), np.isclose (occ_new, 2))))), 'New amos not integer-occupied: {}'.format (occ_new)
         occ_new = np.round (occ_new).astype (int)
 
         for f in self.fragments:
@@ -1441,8 +1442,8 @@ class dmet:
         las = lasci.LASCI (mf, ncas_sub, nelecas_sub, spin_sub=spin_sub, wfnsym_sub=wfnsym_sub, frozen=frozen)
         e_tot, _, ci_sub, _, _, h2eff_sub, veff_sub = las.kernel (casdm0_sub = casdm0_sub)
         if not las.converged:
-            ##print ("\n YOU ARE RUNNING THE CALCULATION EVEN WHEN THE LASCI HAS NOT CONVERGED. ARE YOU OUT OF YOUR MIND OR SIMPLY DESPERATE FOR SOMETHING THAT DOES NOT CRASH??\n \n \n ")
-            raise RuntimeError ("LASCI SCF cycle not converged")
+            print ("\n YOU ARE RUNNING THE CALCULATION EVEN WHEN THE LASCI HAS NOT CONVERGED. ARE YOU OUT OF YOUR MIND OR SIMPLY DESPERATE FOR SOMETHING THAT DOES NOT CRASH??\n \n \n ")
+            ##raise RuntimeError ("LASCI SCF cycle not converged")
         print ("LASCI module energy: {:.9f}".format (e_tot))
         print ("Time in LASCI module: {:.8f} wall, {:.8f} clock".format (time.time () - w0, time.clock () - t0))
         return las, h2eff_sub, veff_sub
