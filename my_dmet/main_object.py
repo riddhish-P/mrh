@@ -578,7 +578,7 @@ class dmet:
         myiter = iters[-1][-1]
         nextiter = 0
         orb_diff = 1.0
-        convergence_threshold = 1e-5 if self.oldLASSCF else 1e-5  ##Try to change this
+        convergence_threshold = 1e-5 if self.oldLASSCF else 1e-4  ##Try to change this
         while (np.any (np.asarray (orb_diff) > convergence_threshold)):
             lower_iters = iters + [('orbs', nextiter)]
             orb_diff = self.doselfconsistent_orbs (lower_iters)
@@ -1446,7 +1446,8 @@ class dmet:
         e_tot, _, ci_sub, _, _, h2eff_sub, veff = las.kernel (mo_coeff = ao2no, ci0 = ci0, casdm0_sub = casdm0_sub)
         if not las.converged:
             print ("\n YOU ARE RUNNING THE CALCULATION EVEN WHEN THE LASCI HAS NOT CONVERGED. ARE YOU OUT OF YOUR MIND OR SIMPLY DESPERATE FOR SOMETHING THAT DOES NOT CRASH??\n \n \n ")
-            ##raise RuntimeError ("LASCI SCF cycle not converged")
+            raise RuntimeError ("LASCI SCF cycle not converged")
+        print ("LASCI module converged? : " , las.converged )
         print ("LASCI module energy: {:.9f}".format (e_tot))
         print ("Time in LASCI module: {:.8f} wall, {:.8f} clock".format (time.time () - w0, time.clock () - t0))
         return las, h2eff_sub, veff

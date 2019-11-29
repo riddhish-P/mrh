@@ -334,10 +334,13 @@ def kernel (las, mo_coeff=None, ci0=None, casdm0_sub=None, conv_tol_grad=1e-5, v
         x0 = prec_op._matvec (-g_vec)
         norm_xorb = linalg.norm (x0[:ugg.nvar_orb]) if ugg.nvar_orb else 0.0
         norm_xci = linalg.norm (x0[ugg.nvar_orb:]) if sum (ugg.ncsf_sub) else 0.0
-        lib.logger.info (las, 'LASCI macro %d : E = %.15g ; |g_int| = %.15g ; |g_ci| = %.15g', it, H_op.e_tot, norm_gorb, norm_gci)
+        lib.logger.info (las, 'LASCI macro %d : E = %.15g ; |g_int| = %.15g ; |g_ci| = %.15g ; |x_orb| = %.15g ; |x_ci| = %.15g', it, H_op.e_tot, norm_gorb, norm_gci, norm_xorb, norm_xci)
         #log.info ('LASCI micro init : E = %.15g ; |g_orb| = %.15g ; |g_ci| = %.15g ; |x0_orb| = %.15g ; |x0_ci| = %.15g',
         #    H_op.e_tot, norm_gorb, norm_gci, norm_xorb, norm_xci)
+        print ("Energy after first mcro is: ", H_op.e_tot )
         if (norm_gorb < conv_tol_grad and norm_gci < conv_tol_grad) or ((norm_gorb + norm_gci) < norm_gx/10):
+
+            print ("\n \n You have reached the convergence here \n \n")
             converged = True
             break
         H_op._init_df () # Take this part out of the true initialization b/c if I'm already converged I don't want to waste the cycles
@@ -370,7 +373,7 @@ def kernel (las, mo_coeff=None, ci0=None, casdm0_sub=None, conv_tol_grad=1e-5, v
         veff = las.split_veff (veff, h2eff_sub, mo_coeff=mo_coeff, ci=ci1)
         t1 = log.timer ('LASCI get_veff after secondorder', *t1)
 
-
+    print ("Riddhish, here is the bool returned for converged" , converged)
     e_tot = las.energy_nuc () + las.energy_elec (mo_coeff=mo_coeff, ci=ci1, h2eff=h2eff_sub, veff=veff)
     # I need the true veff, with f^a_a and f^i_i spin-separated, in order to use the Hessian properly later on
     # Better to do it here with bmPu than in localintegrals
@@ -381,10 +384,10 @@ def kernel (las, mo_coeff=None, ci0=None, casdm0_sub=None, conv_tol_grad=1e-5, v
     lib.logger.info (las, 'LASCI %s after %d cycles', ('not converged', 'converged')[converged], it+1)
     lib.logger.info (las, 'LASCI E = %.15g ; |g_int| = %.15g ; |g_ci| = %.15g ; |g_ext| = %.15g', e_tot, norm_gorb, norm_gci, norm_gx)
     t1 = log.timer ('LASCI wrap-up', *t1)
-        
     mo_coeff, mo_energy, mo_occ, ci1, h2eff_sub = las.canonicalize (mo_coeff, ci1, veff, h2eff_sub)
     t1 = log.timer ('LASCI canonicalization', *t1)
     veff = lib.tag_array (veff, veff_c=veff_c)
+    print ("Riddhish, here is the bool returned for converged" , converged)
     return converged, e_tot, mo_energy, mo_coeff, e_cas, ci1, h2eff_sub, veff
 
 def ci_cycle (las, mo, ci0, veff, h2eff_sub, casdm1s_sub, log, veff_sub_test=None):
@@ -499,6 +502,7 @@ def canonicalize (las, mo_coeff=None, ci=None, veff=None, h2eff_sub=None, orbsym
         nel = nelecas
         if nelecas[1] > nelecas[0]:
             nel = (nelecas[1], nelecas[0])
+
         ci[isub] = las.fcisolver.transform_ci_for_orbital_rotation (ci_i, ncas, nel, umat[i:j,i:j])
     # External-external
     orbsym_i = None if orbsym is None else orbsym[nocc:]
@@ -1348,7 +1352,9 @@ class LASCI_HessianOperator (sparse_linalg.LinearOperator):
             Hci_diag.append (csf.pack_csf (self.fcisolver.make_hdiag_csf (h1e, h2e, norb, ne)))
         Hdiag = np.concatenate ([Horb_diag[self.ugg.uniq_orb_idx]] + Hci_diag)
         Hdiag += self.ah_level_shift
+
         Hdiag[np.abs (Hdiag)<1e-8] = 1e-8
+        print ("Here is the Hdiag" , Hdiag)
         return sparse_linalg.LinearOperator (self.shape, matvec=(lambda x:x/Hdiag), dtype=self.dtype)
 
     def update_mo_ci_eri (self, x, h2eff_sub):
@@ -1384,3 +1390,14 @@ class LASCI_HessianOperator (sparse_linalg.LinearOperator):
         gorb = self.fock1 - self.fock1.T
         gci = [2*hci0 for hci0 in self.hci0]
         return self.ugg.pack (gorb, gci)
+
+    def get_gx (self):
+        gorb = self.fock1 - self.fock1.T
+        idx = np.zeros (gorb.shape, dtype=np.bool_)
+        ncore, nocc = self.ncore, self.nocc
+        idx[ncore:nocc,:ncore] = True
+        idx[nocc:,ncore:nocc] = True
+        if isinstance (self.ugg, LASCISymm_UnitaryGroupGenerators):
+            idx[self.ugg.symm_forbid] = False
+        gx = gorb[idx]
+        return gx
