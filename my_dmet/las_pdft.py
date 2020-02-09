@@ -77,26 +77,16 @@ def kernel (mc, rdm, ot, root=-1):
     Vnn = mc._scf.energy_nuc ()
     h = mc._scf.get_hcore ()
     dm1 = dm1s[0] + dm1s[1]
-    print ('here',dm1 - rdm , np.trace(dm1) - np.trace(rdm))
-    np.save ('rdm_dm1_las', np.asarray (dm1 - rdm) )
     if ot.verbose >= logger.DEBUG or abs (hyb) > 1e-10:
         vj, vk = mc._scf.get_jk (dm=dm1s)
         vj = vj[0] + vj[1]
     else:
         vj = mc._scf.get_j (dm=dm1)
     Te_Vne = np.tensordot (h, dm1)
-    print ('here??')
-    np.set_printoptions(threshold=np.inf)
-    print (mc.ncore, mc.ncas)
-    np.save ('mo_coeff_las', np.asarray (mc.mo_coeff) )
-    np.save ('dm1s_las', np.asarray (dm1s) )
-    np.save ('adm2_las', np.asarray (adm2) )
-    print (np.trace(dm1s[0]) , np.trace(dm1s[1]) )
 
     # (vj_a + vj_b) * (dm_a + dm_b)
     E_j = np.tensordot (vj, dm1) / 2
     # (vk_a * dm_a) + (vk_b * dm_b) Mind the difference!
-    print ('ot.verbose and logger.DEBUG', ot.verbose, logger.DEBUG)
     if ot.verbose >= logger.DEBUG or abs (hyb) > 1e-10:
         E_x = -(np.tensordot (vk[0], dm1s[0]) + np.tensordot (vk[1], dm1s[1])) / 2
     else:
@@ -127,7 +117,6 @@ def kernel (mc, rdm, ot, root=-1):
     t0 = logger.timer (ot, 'Vnn, Te, Vne, E_j, E_x', *t0)
     E_ot = get_E_ot (ot, dm1s, adm2, amo)
     t0 = logger.timer (ot, 'E_ot', *t0)
-    print ('the split' , Te_Vne,  E_j , E_x)
     e_tot = Vnn + Te_Vne + E_j + (hyb * E_x) + E_ot
     logger.info (ot, 'MC-PDFT E = %s, Eot(%s) = %s', e_tot, ot.otxc, E_ot)
     return e_tot, E_ot

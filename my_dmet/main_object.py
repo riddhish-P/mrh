@@ -1447,7 +1447,6 @@ class dmet:
         if not las.converged:
             print ("\n YOU ARE RUNNING THE CALCULATION EVEN WHEN THE LASCI HAS NOT CONVERGED. ARE YOU OUT OF YOUR MIND OR SIMPLY DESPERATE FOR SOMETHING THAT DOES NOT CRASH??\n \n \n ")
             raise RuntimeError ("LASCI SCF cycle not converged")
-        print ("LASCI module converged? : " , las.converged )
         print ("LASCI module energy: {:.9f}".format (e_tot))
         print ("Time in LASCI module: {:.8f} wall, {:.8f} clock".format (time.time () - w0, time.clock () - t0))
         return las, h2eff_sub, veff

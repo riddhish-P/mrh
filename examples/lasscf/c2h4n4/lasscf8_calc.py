@@ -82,7 +82,7 @@ myInts.molden( my_kwargs['calcname'] + '_locints.molden' )
 # Build fragments from atom list
 # --------------------------------------------------------------------------------------------------------------------
 N2Ha = make_fragment_atom_list (myInts, list (range(3)), 'CASSCF(4,4)', name='N2Ha')#, active_orb_list = CASlist)
-C2H2 = make_fragment_atom_list (myInts, list (range(3,7)), 'RHF', name='C2H2')
+C2H2 = make_fragment_atom_list (myInts, list (range(3,7)), 'dummy RHF', name='C2H2')
 N2Hb = make_fragment_atom_list (myInts, list (range(7,10)), 'CASSCF(4,4)', name='N2Hb')#, active_orb_list = CASlist)
 N2Ha.bath_tol = C2H2.bath_tol = N2Hb.bath_tol = bath_tol
 fraglist = [N2Ha, C2H2, N2Hb]

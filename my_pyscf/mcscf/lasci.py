@@ -8,7 +8,7 @@ from mrh.my_pyscf.scf import hf_as
 from mrh.my_pyscf.df.sparse_df import sparsedf_array
 from itertools import combinations, product
 from scipy.sparse import linalg as sparse_linalg
-from scipy import linalg
+from scipy import linalg, special
 import numpy as np
 import time
 
@@ -337,10 +337,7 @@ def kernel (las, mo_coeff=None, ci0=None, casdm0_sub=None, conv_tol_grad=1e-5, v
         lib.logger.info (las, 'LASCI macro %d : E = %.15g ; |g_int| = %.15g ; |g_ci| = %.15g ; |x_orb| = %.15g ; |x_ci| = %.15g', it, H_op.e_tot, norm_gorb, norm_gci, norm_xorb, norm_xci)
         #log.info ('LASCI micro init : E = %.15g ; |g_orb| = %.15g ; |g_ci| = %.15g ; |x0_orb| = %.15g ; |x0_ci| = %.15g',
         #    H_op.e_tot, norm_gorb, norm_gci, norm_xorb, norm_xci)
-        print ("Energy after first mcro is: ", H_op.e_tot )
         if (norm_gorb < conv_tol_grad and norm_gci < conv_tol_grad) or ((norm_gorb + norm_gci) < norm_gx/10):
-
-            print ("\n \n You have reached the convergence here \n \n")
             converged = True
             break
         H_op._init_df () # Take this part out of the true initialization b/c if I'm already converged I don't want to waste the cycles
@@ -361,8 +358,8 @@ def kernel (las, mo_coeff=None, ci0=None, casdm0_sub=None, conv_tol_grad=1e-5, v
                 log.info ('LASCI micro %d : |x_orb| = %.15g ; |x_ci| = %.15g', microit[0], norm_xorb, norm_xci)
 
         my_tol = max (conv_tol_grad, norm_gx/10)
-        x, info_int = sparse_linalg.cg (H_op, -g_vec, x0=x0, atol=my_tol, maxiter=las.max_cycle_micro,
-         callback=my_callback, M=prec_op)
+        x, info_int = sparse_linalg.cg (H_op, -g_vec, x0=x0, tol=my_tol, maxiter=las.max_cycle_micro,
+         callback=my_callback, M=prec_op)  ##RP atol was changed to tol as python 3.6.3 did not recognize the keyword tol
         t1 = log.timer ('LASCI {} microcycles'.format (microit[0]), *t1)
         mo_coeff, ci1, h2eff_sub = H_op.update_mo_ci_eri (x, h2eff_sub)
         casdm1s_sub = las.make_casdm1s_sub (ci=ci1)
@@ -373,7 +370,6 @@ def kernel (las, mo_coeff=None, ci0=None, casdm0_sub=None, conv_tol_grad=1e-5, v
         veff = las.split_veff (veff, h2eff_sub, mo_coeff=mo_coeff, ci=ci1)
         t1 = log.timer ('LASCI get_veff after secondorder', *t1)
 
-    print ("Riddhish, here is the bool returned for converged" , converged)
     e_tot = las.energy_nuc () + las.energy_elec (mo_coeff=mo_coeff, ci=ci1, h2eff=h2eff_sub, veff=veff)
     # I need the true veff, with f^a_a and f^i_i spin-separated, in order to use the Hessian properly later on
     # Better to do it here with bmPu than in localintegrals
@@ -387,7 +383,6 @@ def kernel (las, mo_coeff=None, ci0=None, casdm0_sub=None, conv_tol_grad=1e-5, v
     mo_coeff, mo_energy, mo_occ, ci1, h2eff_sub = las.canonicalize (mo_coeff, ci1, veff, h2eff_sub)
     t1 = log.timer ('LASCI canonicalization', *t1)
     veff = lib.tag_array (veff, veff_c=veff_c)
-    print ("Riddhish, here is the bool returned for converged" , converged)
     return converged, e_tot, mo_energy, mo_coeff, e_cas, ci1, h2eff_sub, veff
 
 def ci_cycle (las, mo, ci0, veff, h2eff_sub, casdm1s_sub, log, veff_sub_test=None):
@@ -460,11 +455,13 @@ def get_fock (las, mo_coeff=None, ci=None, eris=None, casdm1s=None, verbose=None
 def canonicalize (las, mo_coeff=None, ci=None, veff=None, h2eff_sub=None, orbsym=None):
     if mo_coeff is None: mo_coeff = las.mo_coeff
     if ci is None: ci = las.ci
+
     nao, nmo = mo_coeff.shape
     ncore = las.ncore
     nocc = ncore + las.ncas
     ncas_sub = las.ncas_sub
     nelecas_sub = las.nelecas_sub
+
     '''
     orbsym = None
     if isinstance (las, LASCISymm):
@@ -502,6 +499,12 @@ def canonicalize (las, mo_coeff=None, ci=None, veff=None, h2eff_sub=None, orbsym
         nel = nelecas
         if nelecas[1] > nelecas[0]:
             nel = (nelecas[1], nelecas[0])
+
+        norb = las.ncas_sub[isub]
+        nelec = las.nelecas_sub[isub]
+        ndeta = special.comb (norb, nelec[0], exact=True)  
+        ndetb = special.comb (norb, nelec[1], exact=True)
+        ci_i = ci_i.reshape ( ndeta, ndetb )   ###Riddhish added this reshaping on 01/29/20
 
         ci[isub] = las.fcisolver.transform_ci_for_orbital_rotation (ci_i, ncas, nel, umat[i:j,i:j])
     # External-external
