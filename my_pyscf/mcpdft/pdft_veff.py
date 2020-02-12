@@ -1,42 +1,61 @@
 from pyscf import ao2mo
-from pyscf.lib import logger, pack_tril, unpack_tril
+from pyscf.lib import logger, pack_tril, unpack_tril, current_memory
+from pyscf.lib import einsum as einsum_threads
+from pyscf.dft.gen_grid import BLKSIZE
 from mrh.my_pyscf.mcpdft.otpd import get_ontop_pair_density
 from scipy import linalg
+from os import path
 import numpy as np
-import time
+import time, gc
 
 class _ERIS(object):
-    def __init__(self, mo_coeff, ncore, ncas, method='incore'):
+    def __init__(self, mo_coeff, ncore, ncas, method='incore', paaa_only=False):
         self.nao, self.nmo = mo_coeff.shape
         self.ncore = ncore
         self.ncas = ncas
         self.vhf_c = np.zeros ((self.nmo, self.nmo), dtype=mo_coeff.dtype)
         self.method = method
+        self.paaa_only = paaa_only
         if method == 'incore':
-            npair = self.nmo * (self.nmo+1) // 2
+            #npair = self.nmo * (self.nmo+1) // 2
             #self._eri = np.zeros ((npair, npair))
-            npair_cas = ncas * (ncas+1) // 2
-            self.ppaa = np.zeros ((npair, npair_cas), dtype=mo_coeff.dtype)
+            #npair_cas = ncas * (ncas+1) // 2
+            #self.ppaa = np.zeros ((npair, npair_cas), dtype=mo_coeff.dtype)
             #self.ppaa = np.zeros ((self.nmo, self.nmo, ncas, ncas), dtype=mo_coeff.dtype)
+            self.papa = np.zeros ((self.nmo, ncas, self.nmo, ncas), dtype=mo_coeff.dtype)
             self.j_pc = np.zeros ((self.nmo, ncore), dtype=mo_coeff.dtype)
         else:
             raise NotImplementedError ("method={} for veff2".format (self.method))
 
-    def _accumulate (self, ot, rho, Pi, mo, weight, rho_c, vPi):
+    def _accumulate (self, ot, rho, Pi, mo, weight, rho_c, rho_a, vPi):
         if self.method == 'incore':
-            self._accumulate_incore (ot, rho, Pi, mo, weight, rho_c, vPi) 
+            self._accumulate_incore (ot, rho, Pi, mo, weight, rho_c, rho_a, vPi) 
         else:
             raise NotImplementedError ("method={} for veff2".format (self.method))
 
-    def _accumulate_incore (self, ot, rho, Pi, mo, weight, rho_c, vPi):
+    def _accumulate_incore (self, ot, rho, Pi, mo, weight, rho_c, rho_a, vPi):
         #self._eri += ot.get_veff_2body (rho, Pi, mo, weight, aosym='s4', kern=vPi)
+        ncore, ncas = self.ncore, self.ncas
+        nocc = ncore + ncas
+        mo_cas = mo[:,:,ncore:nocc]
         # vhf_c
         vrho_c = _contract_vot_rho (vPi, rho_c)
         self.vhf_c += ot.get_veff_1body (rho, Pi, mo, weight, kern=vrho_c)
+        if self.paaa_only:
+            # 1/2 v_aiuv D_ii D_uv = v^ai_uv D_uv -> F_ai, F_ia needs to be in here since it would otherwise be calculated using ppaa and papa
+            vrho_a = _contract_vot_rho (vPi, rho_a.sum (0))
+            vhf_a = ot.get_veff_1body (rho, Pi, mo, weight, kern=vrho_a) 
+            vhf_a[ncore:nocc,:] = vhf_a[:,ncore:nocc] = 0.0
+            self.vhf_c += vhf_a
         # ppaa
-        ncore, ncas = self.ncore, self.ncas
-        mo_cas = mo[:,:,ncore:][:,:,:ncas]
-        self.ppaa += ot.get_veff_2body (rho, Pi, [mo, mo, mo_cas, mo_cas], weight, aosym='s4', kern=vPi)
+        if self.paaa_only:
+            paaa = ot.get_veff_2body (rho, Pi, [mo, mo_cas, mo_cas, mo_cas], weight, aosym='s1', kern=vPi)
+            #paaa = unpack_tril (paaa.reshape (-1, ncas * (ncas + 1) // 2)).reshape (-1, ncas, ncas, ncas)
+            self.papa[:,:,ncore:nocc,:] += paaa
+            self.papa[ncore:nocc,:,:,:] += paaa.transpose (2,3,0,1)
+            self.papa[ncore:nocc,:,ncore:nocc,:] -= paaa[ncore:nocc,:,:,:]
+        else:
+            self.papa += ot.get_veff_2body (rho, Pi, [mo, mo_cas, mo, mo_cas], weight, aosym='s1', kern=vPi)
         # j_pc
         mo = _square_ao (mo)
         mo_core = mo[:,:,:ncore]
@@ -55,15 +74,18 @@ class _ERIS(object):
             self.ppaa = np.ascontiguousarray (self._eri[:,:,ncore:nocc,ncore:nocc])
             self._eri = None
             '''
+            '''
             self.ppaa = unpack_tril (self.ppaa, axis=0)
             self.ppaa = unpack_tril (self.ppaa, axis=-1).reshape (nmo, nmo, ncas, ncas)
             self.papa = np.ascontiguousarray (self.ppaa.transpose (0,2,1,3))
+            '''
+            self.ppaa = np.ascontiguousarray (self.papa.transpose (0,2,1,3))
             self.k_pc = self.j_pc.copy ()
         else:
             raise NotImplementedError ("method={} for veff2".format (self.method))
         self.k_pc = self.j_pc.copy ()
 
-def kernel (ot, oneCDMs, twoCDM_amo, mo_coeff, ncore, ncas, max_memory=20000, hermi=1, veff2_mo=None):
+def kernel (ot, oneCDMs, twoCDM_amo, mo_coeff, ncore, ncas, max_memory=20000, hermi=1, veff2_mo=None, paaa_only=False):
     ''' Get the 1- and 2-body effective potential from MC-PDFT. Eventually I'll be able to specify
         mo slices for the 2-body part
 
@@ -96,14 +118,31 @@ def kernel (ot, oneCDMs, twoCDM_amo, mo_coeff, ncore, ncas, max_memory=20000, he
     npair = norbs_ao * (norbs_ao + 1) // 2
 
     veff1 = np.zeros_like (oneCDMs[0])
-    veff2 = _ERIS (mo_coeff, ncore, ncas)
+    veff2 = _ERIS (mo_coeff, ncore, ncas, paaa_only=paaa_only)
 
     t0 = (time.clock (), time.time ())
     dm_core = mo_core @ mo_core.T * 2
+    casdm1a = oneCDMs[0] - dm_core/2
+    casdm1b = oneCDMs[1] - dm_core/2
     make_rho_c = ni._gen_rho_evaluator (ot.mol, dm_core, hermi)
+    make_rho_a = tuple (ni._gen_rho_evaluator (ot.mol, dm, hermi) for dm in (casdm1a, casdm1b))
     make_rho = tuple (ni._gen_rho_evaluator (ot.mol, oneCDMs[i,:,:], hermi) for i in range(2))
-    for ao, mask, weight, coords in ni.block_loop (ot.mol, ot.grids, norbs_ao, dens_deriv, max_memory):
+    gc.collect ()
+    remaining_floats = (max_memory - current_memory ()[0]) * 1e6 / 8
+    nderiv_rho = (1,4,10)[dens_deriv] # ?? for meta-GGA
+    nderiv_Pi = (1,4)[ot.Pi_deriv]
+    ncols_v2 = norbs_ao*ncas + ncas**2 if paaa_only else 2*norbs_ao*ncas
+    ncols = 1 + nderiv_rho * (5 + norbs_ao*2) + nderiv_Pi * (1 + ncols_v2) 
+    pdft_blksize = int (remaining_floats / (ncols * BLKSIZE)) * BLKSIZE # something something indexing
+    if ot.grids.coords is None:
+        ot.grids.build(with_non0tab=True)
+    ngrids = ot.grids.coords.shape[0]
+    pdft_blksize = max(BLKSIZE, min(pdft_blksize, ngrids, BLKSIZE*1200))
+    logger.debug (ot, '{} MB used of {} available; block size of {} chosen for grid with {} points'.format (
+        current_memory ()[0], max_memory, pdft_blksize, ngrids))
+    for ao, mask, weight, coords in ni.block_loop (ot.mol, ot.grids, norbs_ao, dens_deriv, max_memory, blksize=pdft_blksize):
         rho = np.asarray ([m[0] (0, ao, mask, xctype) for m in make_rho])
+        rho_a = np.asarray ([m[0] (0, ao, mask, xctype) for m in make_rho_a])
         rho_c = make_rho_c [0] (0, ao, mask, xctype)
         t0 = logger.timer (ot, 'untransformed densities (core and total)', *t0)
         Pi = get_ontop_pair_density (ot, rho, ao, oneCDMs, twoCDM_amo, ao2amo, dens_deriv)
@@ -112,9 +151,9 @@ def kernel (ot, oneCDMs, twoCDM_amo, mo_coeff, ncore, ncas, max_memory=20000, he
         t0 = logger.timer (ot, 'effective potential kernel calculation', *t0)
         veff1 += ot.get_veff_1body (rho, Pi, ao, weight, kern=vrho)
         t0 = logger.timer (ot, '1-body effective potential calculation', *t0)
-        ao = np.tensordot (ao, mo_coeff, axes=1)
+        ao[:,:,:] = np.tensordot (ao, mo_coeff, axes=1)
         t0 = logger.timer (ot, 'ao2mo grid points', *t0)
-        veff2._accumulate (ot, rho, Pi, ao, weight, rho_c, vPi)
+        veff2._accumulate (ot, rho, Pi, ao, weight, rho_c, rho_a, vPi)
         t0 = logger.timer (ot, '2-body effective potential calculation', *t0)
     veff2._finalize ()
     t0 = logger.timer (ot, 'Finalizing 2-body effective potential calculation', *t0)
@@ -269,6 +308,12 @@ def get_veff_2body (otfnal, rho, Pi, ao, weight, aosym='s4', kern=None, vao=None
     nderiv = vao.shape[0]
     ao2 = _contract_ao1_ao2 (ao[0], ao[1], nderiv, symm=ij_symm)
     veff = np.tensordot (ao2, vao, axes=((0,1),(0,1)))
+    #veff = einsum_threads ('dgij,dgkl->ijkl', ao2, vao)
+    # ^ When I save these arrays to disk and load them, np.tensordot appears to multi-thread successfully
+    # However, it appears not to multithread here, in this context
+    # numpy_helper.einsum is definitely always multithreaded but has a serial overhead
+    # Even when I was doing papa it was reporting 15 seconds clock and 15 seconds wall with np.tensordot
+    # So it's hard for me to believe that this is a clock bug
 
     return veff 
 

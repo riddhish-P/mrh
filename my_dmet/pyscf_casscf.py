@@ -73,6 +73,7 @@ def solve (frag, guess_1RDM, chempot_imp):
         mol.symm_orb   = get_subspace_symmetry_blocks (frag.loc2imp, frag.loc2symm)
         mol.irrep_name = frag.ir_names
         mol.irrep_id   = frag.ir_ids
+    mol.max_memory = frag.ints.max_memory
     mol.build ()
     if frag.mol_stdout is None:
         frag.mol_stdout = mol.stdout
@@ -189,10 +190,11 @@ def solve (frag, guess_1RDM, chempot_imp):
     # Guess CI vector
     if len (frag.imp_cache) != 2 and frag.ci_as is not None:
         loc2amo_guess = np.dot (frag.loc2imp, imp2mo[:,norbs_cmo:norbs_occ])
-        gOc = np.dot (loc2amo_guess.conjugate ().T, frag.ci_as_orb)
-        umat_g, svals, umat_c = matrix_svd_control_options (gOc, sort_vecs=-1, only_nonzero_vals=True)
+        metric = np.arange (CASorb) + 1
+        gOc = np.dot (loc2amo_guess.conjugate ().T, (frag.ci_as_orb * metric[None,:]))
+        umat_g, svals, umat_c = matrix_svd_control_options (gOc, sort_vecs=1, only_nonzero_vals=True)
         if (svals.size == norbs_amo):
-            print ("Loading ci guess despite shifted impurity orbitals; singular value sum: {}".format (np.sum (svals)))
+            print ("Loading ci guess despite shifted impurity orbitals; singular value error sum: {}".format (np.sum (svals - metric)))
             imp2mo[:,norbs_cmo:norbs_occ] = np.dot (imp2mo[:,norbs_cmo:norbs_occ], umat_g)
             ci0 = transform_ci_for_orbital_rotation (frag.ci_as, CASorb, CASe, umat_c)
         else:

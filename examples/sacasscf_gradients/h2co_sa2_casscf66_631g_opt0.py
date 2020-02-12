@@ -2,8 +2,8 @@ from pyscf import gto, scf, mcscf
 from pyscf.lib import logger
 from pyscf.data.nist import BOHR
 from pyscf.geomopt.geometric_solver import kernel as optimize
-from mrh.my_pyscf import mcpdft
 from mrh.my_pyscf.fci import csf_solver
+from mrh.my_pyscf.grad import sacasscf
 from scipy import linalg
 import numpy as np
 import math
@@ -43,15 +43,16 @@ h2co_casscf66_631g_xyz = '''C  0.534004  0.000000  0.000000
 O -0.676110  0.000000  0.000000
 H  1.102430  0.000000  0.920125
 H  1.102430  0.000000 -0.920125'''
-mol = gto.M (atom = h2co_casscf66_631g_xyz, basis = '6-31g', symmetry = False, verbose = logger.INFO, output = 'h2co_sa2_tpbe66_631g_opt0.log')
+mol = gto.M (atom = h2co_casscf66_631g_xyz, basis = '6-31g', symmetry = False, verbose = logger.INFO, output = 'h2co_sa2_casscf66_631g_opt0.log')
 mf = scf.RHF (mol).run ()
-mc = mcpdft.CASSCF (mf, 'tPBE', 6, 6, grids_level=9)
+mc = mcscf.CASSCF (mf, 6, 6)
 mc.fcisolver = csf_solver (mol, smult = 1)
 mc.state_average_([0.5,0.5])
 mc.kernel ()
 
-# mc.nuc_grad_method for MC-PDFT objects already points to a state-specific solver
-# Just select which root!
+# Replace PySCF's default gradient calculator, which can only consider the state-average energy, with mrh's state-specific one
+# Pick the state (0-indexing!)
+mc.nuc_grad_method = lambda *args: sacasscf.Gradients (mc)
 mc.nuc_grad_iroot = 0
 
 # Geometry optimization (my_call is optional; it just prints the geometry in internal coordinates every iteration)
@@ -69,15 +70,13 @@ conv_params = {
     'convergence_dmax': 1.5e-4,  # Angstrom
 }
 conv, mol_eq = optimize (mc, callback=my_call, **conv_params)
-
-molcas_geom = np.asarray ([[ 0.550219,-0.000000,-0.000000],
-[-0.690238,-0.000000,-0.000000],
-[ 1.139489,-0.000000, 0.937479],
-[ 1.139489,-0.000000,-0.937479]])
-
-print ("SA(2) tPBE(6,6)/6-31g optimized geometry of first root of formaldehdye:")
+molcas_geom = np.asarray ([[ 0.54965420,0.00000000, 0.00000000],
+[-0.71017341,0.00000000, 0.00000000],
+[ 1.11163660,0.00000000, 0.92144690],
+[ 1.11163660,0.00000000,-0.92144690]])
+print ("SA(2) CASSCF(6,6)/6-31g optimized geometry of first root of formaldehdye:")
 h2co_geom_analysis (mol_eq.atom_coords () * BOHR)
-print ("OpenMolcas's opinion using analytical gradient implementation (note OpenMolcas and PySCF have different quadrature grids):")
+print ("OpenMolcas's opinion using analytical gradient implementation:")
 h2co_geom_analysis (molcas_geom)
 
 

@@ -33,12 +33,12 @@ def kernel (mc, ot, root=-1):
     # make_rdm12s returns (a, b), (aa, ab, bb)
 
     mc_1root = mc
-    if isinstance (mc.ci, list) and root >= 0:
+    if isinstance (mc, StateAverageMCSCFSolver) and root >= 0:
         mc_1root = mcscf.CASCI (mc._scf, mc.ncas, mc.nelecas)
         mc_1root.fcisolver = fci.solver (mc._scf.mol, singlet = False, symm = False)
         mc_1root.mo_coeff = mc.mo_coeff
         mc_1root.ci = mc.ci[root]
-        mc_1root.e_tot = mc.e_tot
+        mc_1root.e_tot = mc.e_states[root]
     dm1s = np.asarray (mc_1root.make_rdm1s ())
     adm1s = np.stack (mc_1root.fcisolver.make_rdm1s (mc_1root.ci, mc.ncas, mc.nelecas), axis=0)
     adm2 = get_2CDM_from_2RDM (mc_1root.fcisolver.make_rdm12 (mc_1root.ci, mc.ncas, mc.nelecas)[1], adm1s)
@@ -149,7 +149,7 @@ def get_mcpdft_child_class (mc, ot, **kwargs):
         def __init__(self, scf, ncas, nelecas, my_ot=None, grids_level=None, **kwargs):
             # Keep the same initialization pattern for backwards-compatibility. Use a separate intializer for the ot functional
             super().__init__(scf, ncas, nelecas)
-            keys = set (('e_ot', 'e_mcscf', 'get_pdft_veff'))
+            keys = set (('e_ot', 'e_mcscf', 'get_pdft_veff', 'e_states'))
             self._keys = set ((self.__dict__.keys ())).union (keys)
             if my_ot is not None:
                 self._init_ot_grids (my_ot, grids_level=grids_level)
@@ -178,12 +178,14 @@ def get_mcpdft_child_class (mc, ot, **kwargs):
             # Hafta reset the grids so that geometry optimization works!
             self._init_ot_grids (self.otfnal.otxc, grids_level=self.grids.level)
             self.e_mcscf, self.e_cas, self.ci, self.mo_coeff, self.mo_energy = super().kernel (mo, ci, **kwargs)
-            if isinstance (self.e_tot, (float, np.number)):
-                self.e_tot, self.e_ot = kernel (self, self.otfnal)
-            else:
-                epdft = [kernel (self, self.otfnal, root=ix) for ix in range (len (self.e_tot))]
-                self.e_tot = [e_tot for e_tot, e_ot in epdft]
+            if isinstance (self, StateAverageMCSCFSolver):
+                epdft = [kernel (self, self.otfnal, root=ix) for ix in range (len (self.e_states))]
+                self.e_mcscf = self.e_states
+                self.fcisolver.e_states = [e_tot for e_tot, e_ot in epdft]
                 self.e_ot = [e_ot for e_tot, e_ot in epdft]
+                self.e_tot = np.dot (self.e_states, self.weights)
+            else:
+                self.e_tot, self.e_ot = kernel (self, self.otfnal)
             return self.e_tot, self.e_ot, self.e_mcscf, self.e_cas, self.ci, self.mo_coeff, self.mo_energy
 
         def dump_flags (self, verbose=None):
@@ -191,7 +193,7 @@ def get_mcpdft_child_class (mc, ot, **kwargs):
             log = logger.new_logger(self, verbose)
             log.info ('on-top pair density exchange-correlation functional: %s', self.otfnal.otxc)
 
-        def get_pdft_veff (self, mo=None, ci=None, incl_coul=False):
+        def get_pdft_veff (self, mo=None, ci=None, incl_coul=False, paaa_only=False):
             ''' Get the 1- and 2-body MC-PDFT effective potentials for a set of mos and ci vectors
 
                 Kwargs:
@@ -202,6 +204,8 @@ def get_mcpdft_child_class (mc, ot, **kwargs):
                     incl_coul : logical
                         If true, includes the Coulomb repulsion energy in the 1-body effective potential.
                         In practice they always appear together.
+                    paaa_only : logical
+                        If true, only the paaa 2-body effective potential elements are evaluated; the rest of ppaa are filled with zeros.
 
                 Returns:
                     veff1 : ndarray of shape (nao, nao)
@@ -225,7 +229,7 @@ def get_mcpdft_child_class (mc, ot, **kwargs):
             adm1s = np.stack (mc_1root.fcisolver.make_rdm1s (ci, self.ncas, self.nelecas), axis=0)
             adm2 = get_2CDM_from_2RDM (mc_1root.fcisolver.make_rdm12 (ci, self.ncas, self.nelecas)[1], adm1s)
             mo_cas = mo[:,self.ncore:][:,:self.ncas]
-            pdft_veff1, pdft_veff2 = pdft_veff.kernel (self.otfnal, dm1s, adm2, mo, self.ncore, self.ncas)
+            pdft_veff1, pdft_veff2 = pdft_veff.kernel (self.otfnal, dm1s, adm2, mo, self.ncore, self.ncas, max_memory=self.max_memory, paaa_only=paaa_only)
             if self.verbose > logger.DEBUG:
                 logger.debug (self, 'Warning: memory-intensive lazy kernel for pdft_veff initiated for '
                     'testing purposes; reduce verbosity to decrease memory footprint')
@@ -255,6 +259,7 @@ def get_mcpdft_child_class (mc, ot, **kwargs):
 
         def nuc_grad_method (self):
             return Gradients (self)
+
 
     pdft = PDFT (mc._scf, mc.ncas, mc.nelecas, my_ot=ot, **kwargs)
     pdft.__dict__.update (mc.__dict__)
