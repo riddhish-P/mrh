@@ -502,10 +502,10 @@ def canonicalize (las, mo_coeff=None, ci=None, veff=None, h2eff_sub=None, orbsym
 
         norb = las.ncas_sub[isub]
         nelec = las.nelecas_sub[isub]
-        ndeta = special.comb (norb, nelec[0], exact=True)  
-        ndetb = special.comb (norb, nelec[1], exact=True)
+        ndeta = special.comb (norb, max(nelec[0],nelec[1]) , exact=True) ##RP taking max,min because sometimes beta electrons are more than the alphs (antiferro magnetic fragments). In this case the shaping needs to be different 
+        ndetb = special.comb (norb, min(nelec[0],nelec[1]), exact=True)
         ci_i = ci_i.reshape ( ndeta, ndetb )   ###Riddhish added this reshaping on 01/29/20
-
+        print ('I am reshaping it in ', nelec[0], nelec[1], ndeta, ndetb )
         ci[isub] = las.fcisolver.transform_ci_for_orbital_rotation (ci_i, ncas, nel, umat[i:j,i:j])
     # External-external
     orbsym_i = None if orbsym is None else orbsym[nocc:]

@@ -1427,7 +1427,8 @@ class dmet:
             wfnsym_sub.append (f.wfnsym)
             if f.ci_as is not None:
                 umat = f.ci_as_orb.conjugate ().T @ amo
-                ci0.append (transform_ci_for_orbital_rotation (f.ci_as, f.norbs_as, (neleca,nelecb), umat))
+                ci0.append (transform_ci_for_orbital_rotation (f.ci_as, f.norbs_as, (max(neleca,nelecb), min(neleca,nelecb)), umat)) ##RP added the max min to deal with cases where we have more beta than alpha
+#                ci0.append (transform_ci_for_orbital_rotation (f.ci_as, f.norbs_as, (neleca,nelecb), umat))
         w0, t0 = time.time (), time.clock ()
         if self.lasci_log is None: 
             mol = self.ints.mol.copy ()
@@ -1446,7 +1447,7 @@ class dmet:
         e_tot, _, ci_sub, _, _, h2eff_sub, veff = las.kernel (mo_coeff = ao2no, ci0 = ci0, casdm0_sub = casdm0_sub)
         if not las.converged:
             print ("\n YOU ARE RUNNING THE CALCULATION EVEN WHEN THE LASCI HAS NOT CONVERGED. ARE YOU OUT OF YOUR MIND OR SIMPLY DESPERATE FOR SOMETHING THAT DOES NOT CRASH??\n \n \n ")
-            raise RuntimeError ("LASCI SCF cycle not converged")
+            #raise RuntimeError ("LASCI SCF cycle not converged")
         print ("LASCI module energy: {:.9f}".format (e_tot))
         print ("Time in LASCI module: {:.8f} wall, {:.8f} clock".format (time.time () - w0, time.clock () - t0))
         return las, h2eff_sub, veff
