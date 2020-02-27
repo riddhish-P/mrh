@@ -505,7 +505,6 @@ def canonicalize (las, mo_coeff=None, ci=None, veff=None, h2eff_sub=None, orbsym
         ndeta = special.comb (norb, max(nelec[0],nelec[1]) , exact=True) ##RP taking max,min because sometimes beta electrons are more than the alphs (antiferro magnetic fragments). In this case the shaping needs to be different 
         ndetb = special.comb (norb, min(nelec[0],nelec[1]), exact=True)
         ci_i = ci_i.reshape ( ndeta, ndetb )   ###Riddhish added this reshaping on 01/29/20
-        print ('I am reshaping it in ', nelec[0], nelec[1], ndeta, ndetb )
         ci[isub] = las.fcisolver.transform_ci_for_orbital_rotation (ci_i, ncas, nel, umat[i:j,i:j])
     # External-external
     orbsym_i = None if orbsym is None else orbsym[nocc:]
@@ -561,7 +560,7 @@ class LASCINoSymm (casci.CASCI):
         self.frozen = frozen
         self.conv_tol_grad = 1e-5  ##Tightened by Riddhish form 1e-4
         self.ah_level_shift = 1e-8
-        self.max_cycle_macro = 50
+        self.max_cycle_macro = 10## changed from 50 because generally it either takes a few or doesnt converge
         self.max_cycle_micro = 5
         keys = set(('ncas_sub', 'nelecas_sub', 'spin_sub', 'conv_tol_grad', 'max_cycle_macro', 'max_cycle_micro', 'ah_level_shift'))
         self._keys = set(self.__dict__.keys()).union(keys)
@@ -1357,7 +1356,6 @@ class LASCI_HessianOperator (sparse_linalg.LinearOperator):
         Hdiag += self.ah_level_shift
 
         Hdiag[np.abs (Hdiag)<1e-8] = 1e-8
-        print ("Here is the Hdiag" , Hdiag)
         return sparse_linalg.LinearOperator (self.shape, matvec=(lambda x:x/Hdiag), dtype=self.dtype)
 
     def update_mo_ci_eri (self, x, h2eff_sub):

@@ -59,7 +59,7 @@ class dmet:
                     minFunc='FOCK_INIT', print_u=True,
                     print_rdm=True, debug_energy=False, debug_reloc=False, oldLASSCF=False,
                     nelec_int_thresh=1e-6, chempot_init=0.0, num_mf_stab_checks=0,
-                    corrpot_maxiter=50, orb_maxiter=50, chempot_tol=1e-6, corrpot_mf_moldens=0, do_conv_molden=False, doPDFT=None, PDFTgrid = 3):
+                    corrpot_maxiter=50, orb_maxiter=100, chempot_tol=1e-6, corrpot_mf_moldens=0, do_conv_molden=False, doPDFT=None, PDFTgrid = 3):
 
         if isTranslationInvariant:
             raise RuntimeError ("The translational invariance option doesn't work!  It needs to be completely rebuilt!")
@@ -1490,4 +1490,29 @@ class dmet:
             eri = np.tensordot (loc2amo.conjugate (), f.eri_gradient, axes=((0),(0)))
             f.E2_cum = (casdm2c * eri).sum () / 2
         return las.e_tot, las.get_grad (h2eff_sub=h2eff_sub, veff=veff)
+
+
+    def get_frag_spin( self, mf, frag_list = None , frag_name_list=None ):
+        las, h2eff_sub, veff = self.lasci()
+        #spin_den = mf.mulliken_pop_meta_lowdin_ao(dm=las.make_rdm1s()[0])[1] - mf.mulliken_pop_meta_lowdin_ao( dm=las.make_rdm1s()[1])[1]
+        if frag_list == None:
+            frag_list = []
+            for ff in range (len(mf.mol.atom_coords())):
+                frag_list.append([ff])
+        if frag_name_list == None:
+            frag_name_list = []
+            for f in frag_list:
+                frag_name_list.append(str(f)[1:-1])
+        print(frag_list,frag_name_list)
+        alpha_den = mf.mulliken_pop(dm=las.make_rdm1s()[0])[1] 
+        beta_den = mf.mulliken_pop( dm=las.make_rdm1s()[1])[1]
+        charge_den = alpha_den + beta_den - mf.mol.atom_charges()
+        spin_den = alpha_den - beta_den
+        for frag , frag_name in zip (frag_list, frag_name_list):
+            frag_spin = frag_charge = 0.0
+            for atom in frag:
+                frag_spin += spin_den[atom]
+                frag_charge += charge_den[atom] 
+            print ("spin on the {} fragment is {:.4f} and the charge is {:.3f} ".format (frag_name, frag_spin , frag_charge))
+        return 
 
