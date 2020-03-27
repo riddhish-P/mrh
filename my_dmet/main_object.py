@@ -566,7 +566,6 @@ class dmet:
         molden.from_mo (self.ints.mol, self.calcname + '_natorb.molden', ao2no, occ=no_occ, ene=no_ene)
         if (self.doPDFT != None) :
             las, h2eff_sub, veff_sub = self.lasci()
-            np.save ('las_trip_orbitals.npy', las.mo_coeff)
             get_las_pdft(las, self.ints.oneRDM_loc, self.doPDFT, self.PDFTgrid)
 
         return self.energy

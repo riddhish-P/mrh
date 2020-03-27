@@ -94,7 +94,8 @@ def kernel (mc, ot, root=-1):
     t0 = logger.timer (ot, 'E_ot', *t0)
     e_tot = Vnn + Te_Vne + E_j + (hyb * E_x) + E_ot
     logger.info (ot, 'MC-PDFT E = %s, Eot(%s) = %s', e_tot, ot.otxc, E_ot)
-    print ('you CAS-PDFT energies are:', e_tot, E_ot )
+    print ("the split Te_Vne,E_j,E_x,E_ot" , Te_Vne , E_j ,  E_x , E_ot ) 
+    #print ('you CAS-PDFT energies are:', e_tot, E_ot )
 
     return e_tot, E_ot
 
