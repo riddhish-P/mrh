@@ -560,8 +560,8 @@ class LASCINoSymm (casci.CASCI):
         self.frozen = frozen
         self.conv_tol_grad = 1e-5  ##Tightened by Riddhish form 1e-4
         self.ah_level_shift = 1e-8
-        self.max_cycle_macro = 10## changed from 50 because generally it either takes a few or doesnt converge
-        self.max_cycle_micro = 5
+        self.max_cycle_macro = 20## changed from 50 because generally it either takes a few or doesnt converge
+        self.max_cycle_micro = 10
         keys = set(('ncas_sub', 'nelecas_sub', 'spin_sub', 'conv_tol_grad', 'max_cycle_macro', 'max_cycle_micro', 'ah_level_shift'))
         self._keys = set(self.__dict__.keys()).union(keys)
         self.fcisolver = csf_solver (self.mol, smult=0)
