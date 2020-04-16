@@ -63,7 +63,6 @@ def kernel (mc, rdm, ot, root=-1):
         mc.ci = mc.ci[root]
         mc.e_tot = mc.e_tot
     dm1s = np.asarray ( mc.make_rdm1s () )
-###    dm1s = np.load ('/panfs/roc/groups/0/cramercj/pandh009/learning/dmet/LAS_PDFT/Test1/dm1s_cas.npy')
     adm1s = np.stack (mc.make_casdm1s () , axis=0 )
     adm2 =  get_2CDM_from_2RDM (mc.make_casdm2(), adm1s)
 #    if ot.verbose >= logger.DEBUG:
@@ -75,9 +74,10 @@ def kernel (mc, rdm, ot, root=-1):
     t0 = logger.timer (ot, 'rdms', *t0)
     omega, alpha, hyb = ot._numint.rsh_and_hybrid_coeff(ot.otxc, spin=spin)
     Vnn = mc._scf.energy_nuc ()
+    hyb_x, hyb_c = hyb
     h = mc._scf.get_hcore ()
     dm1 = dm1s[0] + dm1s[1]
-    if ot.verbose >= logger.DEBUG or abs (hyb) > 1e-10:
+    if ot.verbose >= logger.DEBUG or abs (hyb_x) > 1e-10 or abs (hyb_c) > 1e-10 :
         vj, vk = mc._scf.get_jk (dm=dm1s)
         vj = vj[0] + vj[1]
     else:
@@ -87,7 +87,7 @@ def kernel (mc, rdm, ot, root=-1):
     # (vj_a + vj_b) * (dm_a + dm_b)
     E_j = np.tensordot (vj, dm1) / 2
     # (vk_a * dm_a) + (vk_b * dm_b) Mind the difference!
-    if ot.verbose >= logger.DEBUG or abs (hyb) > 1e-10:
+    if ot.verbose >= logger.DEBUG  or abs (hyb_x) > 1e-10 or abs (hyb_c) > 1e-10 :
         E_x = -(np.tensordot (vk[0], dm1s[0]) + np.tensordot (vk[1], dm1s[1])) / 2
     else:
         E_x = 0
@@ -112,7 +112,7 @@ def kernel (mc, rdm, ot, root=-1):
 #        if isinstance (mc.e_tot, float):
 #            e_err = mc.e_tot - (Vnn + Te_Vne + E_j + E_x + E_c)
 #            assert (abs (e_err) < 1e-8), e_err
-    if abs (hyb) > 1e-10:
+    if abs (hyb_x) > 1e-10 or abs (hyb_c) > 1e-10 > 1e-10:
         logger.debug (ot, 'Adding %s * %s CAS exchange to E_ot', hyb, E_x)
     t0 = logger.timer (ot, 'Vnn, Te, Vne, E_j, E_x', *t0)
     E_ot = get_E_ot (ot, dm1s, adm2, amo)

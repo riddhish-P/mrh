@@ -3,22 +3,15 @@ import os, sys
 from pyscf import gto, dft, scf, mcscf, lib, ci, molden
 from mrh.my_pyscf import mcpdft
 
-# Usage: python H2_PES_hybrid_tPBE.py basis ncas
+# Usage: python H2_PES_decomp_tPBE.py basis ncas
 #
 #
-# Writes a table to H2_PES_hybrid_tPBE_cas2{ncas}_{basis}.dat with columns:
+# Writes a table to H2_PES_decomp_tPBE_cas2{ncas}_{basis}.dat with columns:
 #
-# r_HH E_FCI E_CASSCF(2,ncas) E_PBE E_PBE0 E_tPBE(2,ncas) E_tPBE0(2,ncas,b=0) E_tPBE0(2,ncas,b=a) E_tPBE0(2,ncas,b=a**2)
+# r_HH E_PDFT E_MCSCF E_nuc E_core E_Coulomb E_OTx E_OTc E_WFNxc
 #
-# where the three different versions of 'tPBE0' are
-#
-# E_tPBE0 = T + V_ne + J + a*E_xc^CASSCF + (1-a)*E_x^tPBE + (1-b)*E_c^tPBE
-#
-# with different cases for the relationship of 'b' to 'a'. See also the docstring of mcpdft.otfnal.make_hybrid_fnal
-#
-#
-# Note that CISD == FCI because there are only 2 electrons.
-# If you change 'hyb' below, 'PBE0' also changes to the corresponding KS-DFT hybrid functional.
+# Where E_WFNxc is the MCSCF exchange-correlation energy and the on-top
+# exchange and correlation contributions are separated
 
 ncas = int (sys.argv[2])
 nelecas = 2
@@ -38,10 +31,6 @@ mofile = os.path.basename (__file__)[:-3] + '_cas2{}_{}.mo.npy'.format (ncas, ba
 if gsbasis:
     gsmofile = os.path.basename (__file__)[:-3] + '_cas2{}_{}.mo.npy'.format (ncas, gsbasis)
 moldenfile = os.path.basename (__file__)[:-3] + '_cas2{}_{}.molden'.format (ncas, basis)
-kshfnal = mcpdft.hyb (fnal, hyb, 'diagram') # recovers KS-DFT-type hybrid
-otfnal0 = transl_type + mcpdft.hyb (fnal, hyb, 'translation')
-otfnal1 = transl_type + mcpdft.hyb (fnal, hyb, 'average')
-otfnal2 = transl_type + mcpdft.hyb (fnal, hyb, 'lambda')
 mol = gto.M (atom = 'H 0 0 0; H 0 0 {:.6f}'.format (HHrange[0]), basis = basis, symmetry = symmetry, verbose = verbose, output = logfile) 
 if gsbasis:
     gsmol = gto.M (atom = 'H 0 0 0; H 0 0 {:.6f}'.format (HHrange[0]), basis = gsbasis, symmetry = symmetry, verbose = 0)
@@ -65,19 +54,6 @@ dm0 = [dma, dmb]
 # Restricted mean-field base of MC-SCF objects
 mf = scf.RHF (mol).run ()
 
-# 'Full CI' object
-fci = ci.CISD (mf).run ().as_scanner ()
-
-# UKS comparison (initial guess must break symmetry!)
-pks = scf.UKS (mol)
-pks.xc = fnal
-pks.kernel (dm0)
-pks = pks.as_scanner ()
-hks = scf.UKS (mol)
-hks.xc = kshfnal
-hks.kernel (dm0)
-hks = hks.as_scanner ()
-
 # MC-PDFT objects
 if gsbasis:
     gsmo = np.load (gsmofile)
@@ -88,10 +64,6 @@ if gsbasis:
     mc = mc.as_scanner ()
 else:  
     mc = mcpdft.CASSCF (mf, transl_type + fnal, ncas, nelecas, grids_level = 3).run ().as_scanner ()
-mc0 = mcpdft.CASSCF (mf, otfnal0, ncas, nelecas, grids_level = 3).run ().as_scanner ()
-mc1 = mcpdft.CASSCF (mf, otfnal1, ncas, nelecas, grids_level = 3).run ().as_scanner ()
-mc2 = mcpdft.CASSCF (mf, otfnal2, ncas, nelecas, grids_level = 3).run ().as_scanner ()
-molden.from_mcscf (mc0, moldenfile)
 np.save (mofile, mc.mo_coeff)
 
 # Do MCSCF scan forwards
@@ -99,27 +71,11 @@ table = np.zeros ((HHrange.size, 9))
 table[:,0] = HHrange
 for ix, HHdist in enumerate (HHrange):
     geom = 'H 0 0 0; H 0 0 {:.6f}'.format (HHdist)
-    efci = fci (geom)
-    epdft = mc (geom)
-    mc0.mo_coeff = mc1.mo_coeff = mc2.mo_coeff = mc.mo_coeff
-    molden.from_mo (mol, logfile[:-3] + '{:.2f}.molden'.format (HHdist), mc.mo_coeff)
-    epdft0 = mc0 (geom)
-    epdft1 = mc1 (geom) 
-    epdft2 = mc2 (geom) 
-    emcscf = mc.e_mcscf
-    table[ix,1:] = [efci, emcscf, 0.0, 0.0, epdft, epdft0, epdft1, epdft2]
-
-# Do UKS scan backwards (more orbital stability & smoother potential energy curves)
-geom = 'H 0 0 0; H 0 0 {:.6f}'.format (HHrange[-1])
-euks = pks (geom, dm0 = dm0)
-euks = hks (geom, dm0 = dm0)
-for ix, HHdist in enumerate (HHrange[::-1]):
-    geom = 'H 0 0 0; H 0 0 {:.6f}'.format (HHdist)
-    table[len (HHrange)-1-ix, 3] = pks (geom)
-    table[len (HHrange)-1-ix, 4] = hks (geom)
+    table[ix,1] = mc (geom)
+    table[ix,2] = mc.e_mcscf
+    table[ix,3:] = list (mc.get_energy_decomposition ())
 
 # Print file
-#table[:,2:] = table[:,2:] - table[:,1:2]
 fmt_str = '{:.1f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f}\n'
 with open (datfile, 'w') as f:
     for row in table: # Print the table from short distance to long distance
