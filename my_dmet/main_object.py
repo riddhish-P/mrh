@@ -1426,8 +1426,9 @@ class dmet:
             wfnsym_sub.append (f.wfnsym)
             if f.ci_as is not None:
                 umat = f.ci_as_orb.conjugate ().T @ amo
-                ci0.append (transform_ci_for_orbital_rotation (f.ci_as, f.norbs_as, (max(neleca,nelecb), min(neleca,nelecb)), umat)) ##RP added the max min to deal with cases where we have more beta than alpha
-#                ci0.append (transform_ci_for_orbital_rotation (f.ci_as, f.norbs_as, (neleca,nelecb), umat))
+                nel = (neleca, nelecb)
+                if nelecb > neleca: nel = (nelecb, neleca)
+                ci0.append (transform_ci_for_orbital_rotation (f.ci_as, f.norbs_as, nel, umat))
         w0, t0 = time.time (), time.clock ()
         if self.lasci_log is None: 
             mol = self.ints.mol.copy ()
