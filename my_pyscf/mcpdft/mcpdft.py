@@ -41,6 +41,24 @@ def kernel (mc, ot, root=-1):
         mc_1root.e_tot = mc.e_states[root]
     dm1s = np.asarray (mc_1root.make_rdm1s ())
     adm1s = np.stack (mc_1root.fcisolver.make_rdm1s (mc_1root.ci, mc.ncas, mc.nelecas), axis=0)
+
+    ''' Riddhish is trying to do the mulliken charge equivalent of the pair density here 
+    my_fake_1rdm = np.zeros_like (mc.mo_coeff)  
+    my_1rdm = mc_1root.fcisolver.make_rdm12 (mc_1root.ci, mc.ncas, mc.nelecas)[0]
+    new_rdm = np.dot( np.dot(amo,my_1rdm) , amo.T)
+    pop = np.diagonal(new_rdm)
+    my_2rdm = mc_1root.fcisolver.make_rdm12 (mc_1root.ci, mc.ncas, mc.nelecas)[1]
+    #my_fake_1rdm [mc.ncore:mc.ncore+mc.ncas , mc.ncore:mc.ncore+mc.ncas] = my_1rdm
+    #overlap = mc._scf.mol.get_ovlp() #[mc.ncore:mc.ncore+mc.ncas , mc.ncore:mc.ncore+mc.ncas]
+    #pop = np.einsum('ij,ji->i', my_fake_1rdm , overlap).real
+    chg = np.zeros(mc._scf.mol.natm)
+    #print (mc._scf.mol.ao_labels(fmt=None))
+    for i, s in enumerate(mc._scf.mol.ao_labels(fmt=None)): #[mc.ncore:mc.ncore+mc.ncas]):
+        chg[s[0]] += pop[i]
+        #print ( i , s , chg)
+    print (chg)
+    '''
+
     adm2 = get_2CDM_from_2RDM (mc_1root.fcisolver.make_rdm12 (mc_1root.ci, mc.ncas, mc.nelecas)[1], adm1s)
     spin = abs(mc.nelecas[0] - mc.nelecas[1])
     spin = abs(mc.nelecas[0] - mc.nelecas[1])
