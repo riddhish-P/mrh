@@ -117,7 +117,9 @@ def kernel (mc, rdm, ot, root=-1):
     t0 = logger.timer (ot, 'Vnn, Te, Vne, E_j, E_x', *t0)
     E_ot = get_E_ot (ot, dm1s, adm2, amo)
     t0 = logger.timer (ot, 'E_ot', *t0)
-    e_tot = Vnn + Te_Vne + E_j + (hyb * E_x) + E_ot
+    E_c = 0
+    e_tot = Vnn + Te_Vne + E_j + (hyb_x * E_x) + (hyb_c * E_c) + E_ot 
+    print ("This is the brakdown", e_tot , Vnn , Te_Vne , E_j , E_x , E_ot ) 
     logger.info (ot, 'MC-PDFT E = %s, Eot(%s) = %s', e_tot, ot.otxc, E_ot)
     return e_tot, E_ot
 

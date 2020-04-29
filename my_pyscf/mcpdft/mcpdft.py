@@ -41,24 +41,6 @@ def kernel (mc, ot, root=-1):
         mc_1root.e_tot = mc.e_states[root]
     dm1s = np.asarray (mc_1root.make_rdm1s ())
     adm1s = np.stack (mc_1root.fcisolver.make_rdm1s (mc_1root.ci, mc.ncas, mc.nelecas), axis=0)
-
-    ''' Riddhish is trying to do the mulliken charge equivalent of the pair density here 
-    my_fake_1rdm = np.zeros_like (mc.mo_coeff)  
-    my_1rdm = mc_1root.fcisolver.make_rdm12 (mc_1root.ci, mc.ncas, mc.nelecas)[0]
-    new_rdm = np.dot( np.dot(amo,my_1rdm) , amo.T)
-    pop = np.diagonal(new_rdm)
-    my_2rdm = mc_1root.fcisolver.make_rdm12 (mc_1root.ci, mc.ncas, mc.nelecas)[1]
-    #my_fake_1rdm [mc.ncore:mc.ncore+mc.ncas , mc.ncore:mc.ncore+mc.ncas] = my_1rdm
-    #overlap = mc._scf.mol.get_ovlp() #[mc.ncore:mc.ncore+mc.ncas , mc.ncore:mc.ncore+mc.ncas]
-    #pop = np.einsum('ij,ji->i', my_fake_1rdm , overlap).real
-    chg = np.zeros(mc._scf.mol.natm)
-    #print (mc._scf.mol.ao_labels(fmt=None))
-    for i, s in enumerate(mc._scf.mol.ao_labels(fmt=None)): #[mc.ncore:mc.ncore+mc.ncas]):
-        chg[s[0]] += pop[i]
-        #print ( i , s , chg)
-    print (chg)
-    '''
-
     adm2 = get_2CDM_from_2RDM (mc_1root.fcisolver.make_rdm12 (mc_1root.ci, mc.ncas, mc.nelecas)[1], adm1s)
     spin = abs(mc.nelecas[0] - mc.nelecas[1])
     spin = abs(mc.nelecas[0] - mc.nelecas[1])
@@ -114,7 +96,46 @@ def kernel (mc, ot, root=-1):
     E_ot = get_E_ot (ot, dm1s, adm2, amo)
     t0 = logger.timer (ot, 'E_ot', *t0)
     e_tot = Vnn + Te_Vne + E_j + (hyb_x * E_x) + (hyb_c * E_c) + E_ot
-    logger.note (ot, 'MC-PDFT E = %s, Eot(%s) = %s', e_tot, ot.otxc, E_ot)
+    logger.note (ot, 'M#C-PDFT E = %s, Eot(%s) = %s', e_tot, ot.otxc, E_ot)
+
+
+    ###''' Riddhish is trying to do the mulliken charge equivalent of the pair density here
+    ovlp = mc._scf.mol.get_ovlp()
+    [ao_adm_a , ao_adm_b] = np.einsum('ij,...kj,mk->...im',amo, adm1s, amo)
+    pop_a = np.einsum('ij,ji->i', ao_adm_a , ovlp).real
+    pop_b = np.einsum('ij,ji->i', ao_adm_b , ovlp).real
+
+    my_2rdm = mc_1root.fcisolver.make_rdm12 (mc_1root.ci, mc.ncas, mc.nelecas)[1]
+
+    ao_2adm = np.einsum('ij,kl,jlmn,om,pn-> ikop',amo,amo, my_2rdm ,amo, amo) 
+
+    pop_pair = np.einsum('ijkl,ij,kl->i', ao_2adm , ovlp, ovlp).real
+    print (np.round(pop_pair,3))
+###    ao_2adm = np.einsum('ijkl,ji,lk->k', ao_2adm , ovlp, ovlp).real
+###    new_2rdm = np.einsum('ijkl->ik',ao_2adm)
+###    pop_pair = np.einsum('ij,ji->i', new_2rdm , ovlp).real
+###    new_2rdm = np.einsum('iijk->jk',my_2rdm)
+##    #new_2rdm = np.einsum('ijik->jk',my_2rdm)
+##    #new_2rdm = np.einsum('ijki->jk',my_2rdm)
+##    #new_2rdm = np.einsum('jiki->jk',my_2rdm)
+##    #new_2rdm = np.einsum('jkii->jk',my_2rdm)
+###    ao_2rdm = np.einsum('ij,kj,mk->im',amo, new_2rdm, amo)
+###    pop_pair = np.einsum('ij,ji->i', ao_2rdm , ovlp).real
+
+
+    chg_a = np.zeros(mc._scf.mol.natm)
+    chg_b = np.zeros(mc._scf.mol.natm)
+    chg_pair = np.zeros(mc._scf.mol.natm)
+    for i, s in enumerate(mc._scf.mol.ao_labels(fmt=None)):
+        chg_a[s[0]] += pop_a[i]
+        chg_b[s[0]] += pop_b[i] 
+        chg_pair[s[0]] += pop_pair[i]
+    print ('The alpha active electrons on each atom are', chg_a)
+    print ('The beta active electrons on each atom are', chg_b)
+    print ('The pair density on each atom is', chg_pair, np.sum(chg_pair))    
+    ##'''
+
+
 
     return e_tot, E_ot
 
