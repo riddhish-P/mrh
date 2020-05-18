@@ -96,47 +96,8 @@ def kernel (mc, ot, root=-1):
     E_ot = get_E_ot (ot, dm1s, adm2, amo)
     t0 = logger.timer (ot, 'E_ot', *t0)
     e_tot = Vnn + Te_Vne + E_j + (hyb_x * E_x) + (hyb_c * E_c) + E_ot
+    print ("This is the brakdown", e_tot , Vnn , Te_Vne , E_j , E_x , E_ot )
     logger.note (ot, 'M#C-PDFT E = %s, Eot(%s) = %s', e_tot, ot.otxc, E_ot)
-
-
-    ###''' Riddhish is trying to do the mulliken charge equivalent of the pair density here
-    ovlp = mc._scf.mol.get_ovlp()
-    [ao_adm_a , ao_adm_b] = np.einsum('ij,...kj,mk->...im',amo, adm1s, amo)
-    pop_a = np.einsum('ij,ji->i', ao_adm_a , ovlp).real
-    pop_b = np.einsum('ij,ji->i', ao_adm_b , ovlp).real
-
-    my_2rdm = mc_1root.fcisolver.make_rdm12 (mc_1root.ci, mc.ncas, mc.nelecas)[1]
-
-    ao_2adm = np.einsum('ij,kl,jlmn,om,pn-> ikop',amo,amo, my_2rdm ,amo, amo) 
-
-    pop_pair = np.einsum('ijkl,ij,kl->i', ao_2adm , ovlp, ovlp).real
-    print (np.round(pop_pair,3))
-###    ao_2adm = np.einsum('ijkl,ji,lk->k', ao_2adm , ovlp, ovlp).real
-###    new_2rdm = np.einsum('ijkl->ik',ao_2adm)
-###    pop_pair = np.einsum('ij,ji->i', new_2rdm , ovlp).real
-###    new_2rdm = np.einsum('iijk->jk',my_2rdm)
-##    #new_2rdm = np.einsum('ijik->jk',my_2rdm)
-##    #new_2rdm = np.einsum('ijki->jk',my_2rdm)
-##    #new_2rdm = np.einsum('jiki->jk',my_2rdm)
-##    #new_2rdm = np.einsum('jkii->jk',my_2rdm)
-###    ao_2rdm = np.einsum('ij,kj,mk->im',amo, new_2rdm, amo)
-###    pop_pair = np.einsum('ij,ji->i', ao_2rdm , ovlp).real
-
-
-    chg_a = np.zeros(mc._scf.mol.natm)
-    chg_b = np.zeros(mc._scf.mol.natm)
-    chg_pair = np.zeros(mc._scf.mol.natm)
-    for i, s in enumerate(mc._scf.mol.ao_labels(fmt=None)):
-        chg_a[s[0]] += pop_a[i]
-        chg_b[s[0]] += pop_b[i] 
-        chg_pair[s[0]] += pop_pair[i]
-    print ('The alpha active electrons on each atom are', chg_a)
-    print ('The beta active electrons on each atom are', chg_b)
-    print ('The pair density on each atom is', chg_pair, np.sum(chg_pair))    
-    ##'''
-
-
-
     return e_tot, E_ot
 
 def get_E_ot (ot, oneCDMs, twoCDM_amo, ao2amo, max_memory=20000, hermi=1):
@@ -210,6 +171,49 @@ def get_energy_decomposition (mc, ot, mo_coeff=None, ci=None):
     else:
         e_core, e_coul, e_otx, e_otc, e_wfnxc = _get_e_decomp (mc, ot, mo_coeff, ci, e_mcscf, e_nuc, h, xfnal, cfnal)
     return e_nuc, e_core, e_coul, e_otx, e_otc, e_wfnxc
+
+
+def get_pair_density_distribution (mc):
+    ''' Riddhish is trying to do the mulliken charge equivalent of the pair density here
+    '''
+    amo = mc.mo_coeff[:,mc.ncore:mc.ncore+mc.ncas]
+    adm1s = np.stack (mc.fcisolver.make_rdm1s (mc.ci, mc.ncas, mc.nelecas), axis=0)
+    ovlp = mc._scf.mol.get_ovlp()
+    [ao_adm_a , ao_adm_b] = np.einsum('ij,...kj,mk->...im',amo, adm1s, amo)
+    pop_a = np.einsum('ij,ji->i', ao_adm_a , ovlp).real
+    pop_b = np.einsum('ij,ji->i', ao_adm_b , ovlp).real
+
+    my_2rdm = mc.fcisolver.make_rdm12 (mc.ci, mc.ncas, mc.nelecas)[1]
+
+    ao_2adm = np.einsum('ij,kl,jlmn,om,pn-> ikop',amo,amo, my_2rdm ,amo, amo)
+
+    pop_pair = np.einsum('ijkl,ij,kl->i', ao_2adm , ovlp, ovlp).real
+    #print (np.round(pop_pair,3))
+###    ao_2adm = np.einsum('ijkl,ji,lk->k', ao_2adm , ovlp, ovlp).real
+###    new_2rdm = np.einsum('ijkl->ik',ao_2adm)
+###    pop_pair = np.einsum('ij,ji->i', new_2rdm , ovlp).real
+###    new_2rdm = np.einsum('iijk->jk',my_2rdm)
+##    #new_2rdm = np.einsum('ijik->jk',my_2rdm)
+##    #new_2rdm = np.einsum('ijki->jk',my_2rdm)
+##    #new_2rdm = np.einsum('jiki->jk',my_2rdm)
+##    #new_2rdm = np.einsum('jkii->jk',my_2rdm)
+###    ao_2rdm = np.einsum('ij,kj,mk->im',amo, new_2rdm, amo)
+###    pop_pair = np.einsum('ij,ji->i', ao_2rdm , ovlp).real
+
+
+    chg_a = np.zeros(mc._scf.mol.natm)
+    chg_b = np.zeros(mc._scf.mol.natm)
+    chg_pair = np.zeros(mc._scf.mol.natm)
+    for i, s in enumerate(mc._scf.mol.ao_labels(fmt=None)):
+        chg_a[s[0]] += pop_a[i]
+        chg_b[s[0]] += pop_b[i]
+
+        chg_pair[s[0]] += pop_pair[i]
+    print ('The alpha active electrons on each atom are', chg_a)
+    print ('The beta active electrons on each atom are', chg_b)
+    print ('The pair density on each atom is', chg_pair, np.sum(chg_pair))
+    return (pop_pair)  # ao_adm_a+ao_adm_b)
+
 
 def _get_e_decomp (mc, ot, mo_coeff, ci, e_mcscf, e_nuc, h, xfnal, cfnal):
     mc_1root = mcscf.CASCI (mc._scf, mc.ncas, mc.nelecas)
@@ -354,6 +358,10 @@ def get_mcpdft_child_class (mc, ot, **kwargs):
             if mo_coeff is None: mo_coeff = self.mo_coeff
             if ci is None: ci = self.ci
             return get_energy_decomposition (self, self.otfnal, mo_coeff=mo_coeff, ci=ci)
+
+        def get_pair_density_distribution (self):
+            return get_pair_density_distribution(self)
+
 
         @property
         def otxc (self):
