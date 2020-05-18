@@ -1,21 +1,26 @@
 from pyscf import ao2mo
-from pyscf.lib import logger, pack_tril, unpack_tril, current_memory
+from pyscf.lib import logger, pack_tril, unpack_tril, current_memory, tag_array
 from pyscf.lib import einsum as einsum_threads
+from pyscf.dft import numint
 from pyscf.dft.gen_grid import BLKSIZE
-from mrh.my_pyscf.mcpdft.otpd import get_ontop_pair_density
+from mrh.my_pyscf.mcpdft.otpd import get_ontop_pair_density, _grid_ao2mo
 from scipy import linalg
 from os import path
 import numpy as np
 import time, gc
 
 class _ERIS(object):
-    def __init__(self, mo_coeff, ncore, ncas, method='incore', paaa_only=False):
+    def __init__(self, mol, mo_coeff, ncore, ncas, method='incore', paaa_only=False, verbose=0, stdout=None):
+        self.mol = mol
+        self.mo_coeff = mo_coeff
         self.nao, self.nmo = mo_coeff.shape
         self.ncore = ncore
         self.ncas = ncas
         self.vhf_c = np.zeros ((self.nmo, self.nmo), dtype=mo_coeff.dtype)
         self.method = method
         self.paaa_only = paaa_only
+        self.verbose = verbose
+        self.stdout = stdout
         if method == 'incore':
             #npair = self.nmo * (self.nmo+1) // 2
             #self._eri = np.zeros ((npair, npair))
@@ -27,39 +32,49 @@ class _ERIS(object):
         else:
             raise NotImplementedError ("method={} for veff2".format (self.method))
 
-    def _accumulate (self, ot, rho, Pi, mo, weight, rho_c, rho_a, vPi):
+    def _accumulate (self, ot, rho, Pi, mo, weight, rho_c, rho_a, vPi, non0tab=None):
         if self.method == 'incore':
-            self._accumulate_incore (ot, rho, Pi, mo, weight, rho_c, rho_a, vPi) 
+            self._accumulate_incore (ot, rho, Pi, mo, weight, rho_c, rho_a, vPi, non0tab) 
         else:
             raise NotImplementedError ("method={} for veff2".format (self.method))
 
-    def _accumulate_incore (self, ot, rho, Pi, mo, weight, rho_c, rho_a, vPi):
+    def _accumulate_incore (self, ot, rho, Pi, ao, weight, rho_c, rho_a, vPi, non0tab):
         #self._eri += ot.get_veff_2body (rho, Pi, mo, weight, aosym='s4', kern=vPi)
+        # ao is here stored in row-major order = deriv,AOs,grids regardless of what
+        # the ndarray object thinks
+        mo_coeff = self.mo_coeff
         ncore, ncas = self.ncore, self.ncas
         nocc = ncore + ncas
-        mo_cas = mo[:,:,ncore:nocc]
+        mo_cas = _grid_ao2mo (self.mol, ao, mo_coeff[:,ncore:nocc], non0tab)
         # vhf_c
         vrho_c = _contract_vot_rho (vPi, rho_c)
-        self.vhf_c += ot.get_veff_1body (rho, Pi, mo, weight, kern=vrho_c)
+        self.vhf_c += mo_coeff.conjugate ().T @ ot.get_veff_1body (rho, Pi, ao, weight, kern=vrho_c) @ mo_coeff
         if self.paaa_only:
             # 1/2 v_aiuv D_ii D_uv = v^ai_uv D_uv -> F_ai, F_ia needs to be in here since it would otherwise be calculated using ppaa and papa
             vrho_a = _contract_vot_rho (vPi, rho_a.sum (0))
-            vhf_a = ot.get_veff_1body (rho, Pi, mo, weight, kern=vrho_a) 
+            vhf_a = ot.get_veff_1body (rho, Pi, ao, weight, kern=vrho_a) 
+            vhf_a = mo_coeff.conjugate ().T @ vhf_a @ mo_coeff
             vhf_a[ncore:nocc,:] = vhf_a[:,ncore:nocc] = 0.0
             self.vhf_c += vhf_a
         # ppaa
         if self.paaa_only:
-            paaa = ot.get_veff_2body (rho, Pi, [mo, mo_cas, mo_cas, mo_cas], weight, aosym='s1', kern=vPi)
+            paaa = ot.get_veff_2body (rho, Pi, [ao, mo_cas, mo_cas, mo_cas], weight, aosym='s1', kern=vPi)
+            paaa = np.tensordot (mo_coeff.T, paaa, axes=1)
             #paaa = unpack_tril (paaa.reshape (-1, ncas * (ncas + 1) // 2)).reshape (-1, ncas, ncas, ncas)
             self.papa[:,:,ncore:nocc,:] += paaa
             self.papa[ncore:nocc,:,:,:] += paaa.transpose (2,3,0,1)
             self.papa[ncore:nocc,:,ncore:nocc,:] -= paaa[ncore:nocc,:,:,:]
         else:
-            self.papa += ot.get_veff_2body (rho, Pi, [mo, mo_cas, mo, mo_cas], weight, aosym='s1', kern=vPi)
+            #self.papa += ot.get_veff_2body (rho, Pi, [mo, mo_cas, mo, mo_cas], weight, aosym='s1', kern=vPi)
+            papa = ot.get_veff_2body (rho, Pi, [ao, mo_cas, ao, mo_cas], weight, aosym='s1', kern=vPi)
+            papa = np.tensordot (mo_coeff.T, papa, axes=1)
+            self.papa += np.tensordot (mo_coeff.T, papa, axes=((1),(2))).transpose (1,2,0,3)
         # j_pc
-        mo = _square_ao (mo)
-        mo_core = mo[:,:,:ncore]
-        self.j_pc += ot.get_veff_1body (rho, Pi, [mo, mo_core], weight, kern=vPi)
+        if self.verbose > logger.DEBUG:
+            raise NotImplementedError ('TODO: fix the three lines below for the new signature of _accumulate_incore')
+            mo = _square_ao (mo)
+            mo_core = mo[:,:,:ncore]
+            self.j_pc += ot.get_veff_1body (rho, Pi, [mo, mo_core], weight, kern=vPi)
 
     def _finalize (self):
         if self.method == 'incore':
@@ -85,13 +100,13 @@ class _ERIS(object):
             raise NotImplementedError ("method={} for veff2".format (self.method))
         self.k_pc = self.j_pc.copy ()
 
-def kernel (ot, oneCDMs, twoCDM_amo, mo_coeff, ncore, ncas, max_memory=20000, hermi=1, veff2_mo=None, paaa_only=False):
+def kernel (ot, oneCDMs_amo, twoCDM_amo, mo_coeff, ncore, ncas, max_memory=20000, hermi=1, veff2_mo=None, paaa_only=False):
     ''' Get the 1- and 2-body effective potential from MC-PDFT. Eventually I'll be able to specify
         mo slices for the 2-body part
 
         Args:
             ot : an instance of otfnal class
-            oneCDMs : ndarray of shape (2, nao, nao)
+            oneCDMs_amo : ndarray of shape (2, ncas, ncas)
                 containing spin-separated one-body density matrices
             twoCDM_amo : ndarray of shape (ncas, ncas, ncas, ncas)
                 containing spin-summed two-body cumulant density matrix in an active space
@@ -111,22 +126,43 @@ def kernel (ot, oneCDMs, twoCDM_amo, mo_coeff, ncore, ncas, max_memory=20000, he
     '''
     if veff2_mo is not None:
         raise NotImplementedError ('Molecular orbital slices for the two-body part')
+    nocc = ncore + ncas
     ni, xctype, dens_deriv = ot._numint, ot.xctype, ot.dens_deriv
     norbs_ao = mo_coeff.shape[0]
     mo_core = mo_coeff[:,:ncore]
-    ao2amo = mo_coeff[:,ncore:][:,:ncas]
+    ao2amo = mo_coeff[:,ncore:nocc]
     npair = norbs_ao * (norbs_ao + 1) // 2
 
-    veff1 = np.zeros_like (oneCDMs[0])
-    veff2 = _ERIS (mo_coeff, ncore, ncas, paaa_only=paaa_only)
+    veff1 = np.zeros ((norbs_ao, norbs_ao), dtype=oneCDMs_amo.dtype)
+    veff2 = _ERIS (ot.mol, mo_coeff, ncore, ncas, paaa_only=paaa_only, verbose=ot.verbose, stdout=ot.stdout)
 
     t0 = (time.clock (), time.time ())
-    dm_core = mo_core @ mo_core.T * 2
-    casdm1a = oneCDMs[0] - dm_core/2
-    casdm1b = oneCDMs[1] - dm_core/2
-    make_rho_c = ni._gen_rho_evaluator (ot.mol, dm_core, hermi)
-    make_rho_a = tuple (ni._gen_rho_evaluator (ot.mol, dm, hermi) for dm in (casdm1a, casdm1b))
-    make_rho = tuple (ni._gen_rho_evaluator (ot.mol, oneCDMs[i,:,:], hermi) for i in range(2))
+    dm_core = mo_core @ mo_core.T 
+    dm_cas = np.dot (ao2amo, np.dot (oneCDMs_amo, ao2amo.T)).transpose (1,0,2)
+    dm1s = dm_cas + dm_core[None,:,:] 
+    dm_core *= 2
+    # Can't trust that NOs are the same for alpha and beta. Have to do this explicitly here
+    # Begin tag block: dm_core
+    imo_occ = np.ones (ncore, dtype=dm_core.dtype) * 2.0
+    dm_core = tag_array (dm_core, mo_coeff=mo_core, mo_occ=imo_occ)
+    # Begin tag block: dm_cas
+    amo_occ = np.zeros ((2,ncas), dtype=dm_cas.dtype)
+    amo_coeff = np.stack ([ao2amo.copy (), ao2amo.copy ()], axis=0)
+    for i in range (2):
+        amo_occ[i], ua = linalg.eigh (oneCDMs_amo[i])
+        amo_coeff[i] = amo_coeff[i] @ ua
+    dm_cas = tag_array (dm_cas, mo_coeff=amo_coeff, mo_occ=amo_occ)
+    # Begin tag block: dm1s
+    mo_occ = np.zeros ((2, nocc), dtype=dm1s.dtype)
+    mo_occ[:,:ncore] = 1.0
+    mo_occ[:,ncore:nocc] = amo_occ
+    tag_coeff = np.stack ((mo_coeff[:,:nocc].copy (), mo_coeff[:,:nocc].copy ()), axis=0)
+    tag_coeff[:,:,ncore:nocc] = amo_coeff 
+    dm1s = tag_array (dm1s, mo_coeff=tag_coeff, mo_occ=mo_occ)
+    # End tag block
+    make_rho_c, nset_c, nao_c = ni._gen_rho_evaluator (ot.mol, dm_core, hermi)
+    make_rho_a, nset_a, nao_a = ni._gen_rho_evaluator (ot.mol, dm_cas, hermi)
+    make_rho, nset, nao = ni._gen_rho_evaluator (ot.mol, dm1s, hermi)
     gc.collect ()
     remaining_floats = (max_memory - current_memory ()[0]) * 1e6 / 8
     nderiv_rho = (1,4,10)[dens_deriv] # ?? for meta-GGA
@@ -141,19 +177,19 @@ def kernel (ot, oneCDMs, twoCDM_amo, mo_coeff, ncore, ncas, max_memory=20000, he
     logger.debug (ot, '{} MB used of {} available; block size of {} chosen for grid with {} points'.format (
         current_memory ()[0], max_memory, pdft_blksize, ngrids))
     for ao, mask, weight, coords in ni.block_loop (ot.mol, ot.grids, norbs_ao, dens_deriv, max_memory, blksize=pdft_blksize):
-        rho = np.asarray ([m[0] (0, ao, mask, xctype) for m in make_rho])
-        rho_a = np.asarray ([m[0] (0, ao, mask, xctype) for m in make_rho_a])
-        rho_c = make_rho_c [0] (0, ao, mask, xctype)
+        rho = np.asarray ([make_rho (i, ao, mask, xctype) for i in range(2)])
+        rho_a = np.asarray ([make_rho_a (i, ao, mask, xctype) for i in range(2)])
+        rho_c = make_rho_c (0, ao, mask, xctype)
         t0 = logger.timer (ot, 'untransformed densities (core and total)', *t0)
-        Pi = get_ontop_pair_density (ot, rho, ao, oneCDMs, twoCDM_amo, ao2amo, dens_deriv)
+        Pi = get_ontop_pair_density (ot, rho, ao, dm1s, twoCDM_amo, ao2amo, dens_deriv, mask)
         t0 = logger.timer (ot, 'on-top pair density calculation', *t0)
         eot, vrho, vPi = ot.eval_ot (rho, Pi, weights=weight)
         t0 = logger.timer (ot, 'effective potential kernel calculation', *t0)
         veff1 += ot.get_veff_1body (rho, Pi, ao, weight, kern=vrho)
         t0 = logger.timer (ot, '1-body effective potential calculation', *t0)
-        ao[:,:,:] = np.tensordot (ao, mo_coeff, axes=1)
-        t0 = logger.timer (ot, 'ao2mo grid points', *t0)
-        veff2._accumulate (ot, rho, Pi, ao, weight, rho_c, rho_a, vPi)
+        #ao[:,:,:] = np.tensordot (ao, mo_coeff, axes=1)
+        #t0 = logger.timer (ot, 'ao2mo grid points', *t0)
+        veff2._accumulate (ot, rho, Pi, ao, weight, rho_c, rho_a, vPi, mask)
         t0 = logger.timer (ot, '2-body effective potential calculation', *t0)
     veff2._finalize ()
     t0 = logger.timer (ot, 'Finalizing 2-body effective potential calculation', *t0)
@@ -197,7 +233,7 @@ def lazy_kernel (ot, oneCDMs, twoCDM_amo, ao2amo, max_memory=20000, hermi=1, vef
     for ao, mask, weight, coords in ni.block_loop (ot.mol, ot.grids, norbs_ao, dens_deriv, max_memory):
         rho = np.asarray ([m[0] (0, ao, mask, xctype) for m in make_rho])
         t0 = logger.timer (ot, 'untransformed density', *t0)
-        Pi = get_ontop_pair_density (ot, rho, ao, oneCDMs, twoCDM_amo, ao2amo, dens_deriv)
+        Pi = get_ontop_pair_density (ot, rho, ao, oneCDMs, twoCDM_amo, ao2amo, dens_deriv, mask)
         t0 = logger.timer (ot, 'on-top pair density calculation', *t0)
         eot, vrho, vPi = ot.eval_ot (rho, Pi, weights=weight)
         t0 = logger.timer (ot, 'effective potential kernel calculation', *t0)
@@ -241,6 +277,9 @@ def get_veff_1body (otfnal, rho, Pi, ao, weight, kern=None, **kwargs):
         ao = [ao, ao]
     elif len (ao) != 2:
         raise NotImplementedError ("uninterpretable aos!")
+    elif ao[0].size < ao[1].size:
+        # Life pro-tip: do more operations with smaller arrays and fewer operations with bigger arrays
+        ao = [ao[1], ao[0]]
     if kern is None: 
         kern = otfnal.get_dEot_drho (rho, Pi, **kwargs) 
     else:
@@ -249,10 +288,12 @@ def get_veff_1body (otfnal, rho, Pi, ao, weight, kern=None, **kwargs):
     kern *= weight[None,:]
 
     # Zeroth and first derivatives
-    veff = np.tensordot (kern[0,:,None] * ao[0][0], ao[1][0], axes=(0,0))
-    if nderiv > 1:
-        veff += np.tensordot ((kern[1:4,:,None] * ao[0][1:4]).sum (0), ao[1][0], axes=(0,0))
-        veff += np.tensordot (ao[0][0], (kern[1:4,:,None] * ao[1][1:4]).sum (0), axes=(0,0))
+    vao = _contract_vot_ao (kern, ao[1])
+    nterm = vao.shape[0]
+    veff = sum ([np.dot (a.T, v) for a, v in zip (ao[0][0:nterm], vao)])
+    # ^ Crazy as it sounds, this sum over list comprehension is by far the fastest
+    # implementation of this step that I've managed to pull off so far!
+    # It's probably because the operation in the list is so well-vectorized.
 
     rho = np.squeeze (rho)
     Pi = np.squeeze (Pi)
@@ -384,11 +425,22 @@ def _contract_ao1_ao2 (ao1, ao2, nderiv, symm=False):
     ao2 = None
     return prod 
 
-def _contract_vot_ao (vot, ao):
+def _contract_vot_ao (vot, ao, out=None):
+    ''' REQUIRES array in shape = (nderiv,nao,ngrids) and data layout = (nderiv,ngrids,nao)/row-major '''
     nderiv = vot.shape[0]
-    vao = ao[0] * vot[:,:,None]
-    if nderiv > 1:
-        vao[0] += (ao[1:4] * vot[1:4,:,None]).sum (0)
+    ao = np.ascontiguousarray (ao.transpose (0,2,1))
+    #vao = (ao[0][None,:,:] * vot[:,None,:]).transpose (0,2,1)
+    #ao = ao.transpose (0,2,1)
+    #if nderiv > 1:
+        #vao[0] += (ao[1:4] * vot[1:4,:,None]).sum (0)
+        #vao[0] += numint._scale_ao (ao[1:4], vot[1:4])
+    nao, ngrids = ao.shape[1:]
+    vao = np.ndarray ((nderiv, nao, ngrids), dtype=ao.dtype, buffer=out).transpose (0,2,1)
+    ao = ao.transpose (0,2,1)
+    vao[0] = numint._scale_ao (ao[:nderiv], vot, out=vao[0])
+    if nderiv > 1: 
+        for i in range (1,4):
+            vao[i] = numint._scale_ao (ao[0:1,:,:], vot[i:i+1,:], out=vao[i])
     return vao
 
 def _contract_ao_vao (ao, vao, symm=False):
