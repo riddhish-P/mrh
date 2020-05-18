@@ -138,7 +138,7 @@ def get_E_ot (ot, oneCDMs, twoCDM_amo, ao2amo, max_memory=20000, hermi=1):
                 rho_test += np.einsum ('ijk,ak,aj->ia', oneCDMs, ao[ideriv], ao[0])
                 logger.debug (ot, "Spin-density derivatives, |PySCF-einsum| = %s", linalg.norm (rho[:,ideriv,:]-rho_test))
         t0 = logger.timer (ot, 'untransformed density', *t0)
-        Pi = get_ontop_pair_density (ot, rho, ao, oneCDMs, twoCDM_amo, ao2amo, dens_deriv) 
+        Pi = get_ontop_pair_density (ot, rho, ao, oneCDMs, twoCDM_amo, ao2amo, dens_deriv, mask) 
         t0 = logger.timer (ot, 'on-top pair density calculation', *t0) 
         E_ot += ot.get_E_ot (rho, Pi, weight)
         t0 = logger.timer (ot, 'on-top exchange-correlation energy calculation', *t0) 
@@ -233,13 +233,29 @@ def _get_e_decomp (mc, ot, mo_coeff, ci, e_mcscf, e_nuc, h, xfnal, cfnal):
     e_wfnxc = e_mcscf - e_nuc - e_core - e_coul
     return e_core, e_coul, e_otx, e_otc, e_wfnxc
 
+# This is clumsy and hacky and should be fixed in pyscf.mcscf.addons eventually rather than here
+class StateAverageMCPDFTSolver:
+    pass
+def sapdft_grad_monkeypatch_(mc):
+    if isinstance (mc, StateAverageMCPDFTSolver):
+        return mc
+    class StateAverageMCPDFT (mc.__class__, StateAverageMCPDFTSolver):
+        def nuc_grad_method (self):
+            return Gradients (self)
+    mc.__class__ = StateAverageMCPDFT
+    return mc
+
 def get_mcpdft_child_class (mc, ot, **kwargs):
 
     class PDFT (mc.__class__):
 
         def __init__(self, scf, ncas, nelecas, my_ot=None, grids_level=None, **kwargs):
             # Keep the same initialization pattern for backwards-compatibility. Use a separate intializer for the ot functional
-            super().__init__(scf, ncas, nelecas)
+            try:
+                super().__init__(scf, ncas, nelecas)
+            except TypeError as e:
+                # I think this is the same DFCASSCF problem as with the DF-SACASSCF gradients earlier
+                super().__init__()
             keys = set (('e_ot', 'e_mcscf', 'get_pdft_veff', 'e_states'))
             self._keys = set ((self.__dict__.keys ())).union (keys)
             if my_ot is not None:
@@ -323,7 +339,7 @@ def get_mcpdft_child_class (mc, ot, **kwargs):
             adm1s = np.stack (mc_1root.fcisolver.make_rdm1s (ci, self.ncas, self.nelecas), axis=0)
             adm2 = get_2CDM_from_2RDM (mc_1root.fcisolver.make_rdm12 (ci, self.ncas, self.nelecas)[1], adm1s)
             mo_cas = mo[:,self.ncore:][:,:self.ncas]
-            pdft_veff1, pdft_veff2 = pdft_veff.kernel (self.otfnal, dm1s, adm2, mo, self.ncore, self.ncas, max_memory=self.max_memory, paaa_only=paaa_only)
+            pdft_veff1, pdft_veff2 = pdft_veff.kernel (self.otfnal, adm1s, adm2, mo, self.ncore, self.ncas, max_memory=self.max_memory, paaa_only=paaa_only)
             if self.verbose > logger.DEBUG:
                 logger.debug (self, 'Warning: memory-intensive lazy kernel for pdft_veff initiated for '
                     'testing purposes; reduce verbosity to decrease memory footprint')
@@ -359,9 +375,20 @@ def get_mcpdft_child_class (mc, ot, **kwargs):
             if ci is None: ci = self.ci
             return get_energy_decomposition (self, self.otfnal, mo_coeff=mo_coeff, ci=ci)
 
+<<<<<<< HEAD
         def get_pair_density_distribution (self):
             return get_pair_density_distribution(self)
 
+=======
+        def state_average (self, weights=(0.5,0.5)):
+            # This is clumsy and hacky and should be fixed in pyscf.mcscf.addons eventually rather than here
+            return sapdft_grad_monkeypatch_(super ().state_average (weights=weights))
+
+        def state_average_(self, weights=(0.5,0.5)):
+            # This is clumsy and hacky and should be fixed in pyscf.mcscf.addons eventually rather than here
+            sapdft_grad_monkeypatch_(super ().state_average_(weights=weights))
+            return self
+>>>>>>> laspdft_test
 
         @property
         def otxc (self):
@@ -376,7 +403,7 @@ def get_mcpdft_child_class (mc, ot, **kwargs):
     return pdft
 
 
-
+    
 
 
 
