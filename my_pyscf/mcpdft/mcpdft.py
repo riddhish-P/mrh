@@ -183,18 +183,18 @@ def get_pair_density_distribution (mc):
     pop_a = np.einsum('ij,ji->i', ao_adm_a , ovlp).real
     pop_b = np.einsum('ij,ji->i', ao_adm_b , ovlp).real
 
-    my_2rdm = mc.fcisolver.make_rdm12 (mc.ci, mc.ncas, mc.nelecas)[1]
+    #my_2rdm = mc.fcisolver.make_rdm12 (mc.ci, mc.ncas, mc.nelecas)[1]
 
-    ao_2adm = np.einsum('ij,kl,jlmn,om,pn-> ikop',amo,amo, my_2rdm ,amo, amo)
+    #ao_2adm = np.einsum('ij,kl,jlmn,om,pn-> ikop',amo,amo, my_2rdm ,amo, amo)
 
-    pop_pair = np.einsum('ijkl,ij,kl->i', ao_2adm , ovlp, ovlp).real
-    #print (np.round(pop_pair,3))
-###    ao_2adm = np.einsum('ijkl,ji,lk->k', ao_2adm , ovlp, ovlp).real
-###    new_2rdm = np.einsum('ijkl->ik',ao_2adm)
-###    pop_pair = np.einsum('ij,ji->i', new_2rdm , ovlp).real
-###    new_2rdm = np.einsum('iijk->jk',my_2rdm)
-##    #new_2rdm = np.einsum('ijik->jk',my_2rdm)
-##    #new_2rdm = np.einsum('ijki->jk',my_2rdm)
+    #pop_pair = np.einsum('ijkl,ij,kl->i', ao_2adm , ovlp, ovlp).real
+    ###print (np.round(pop_pair,3))
+####    ao_2adm = np.einsum('ijkl,ji,lk->k', ao_2adm , ovlp, ovlp).real
+####    new_2rdm = np.einsum('ijkl->ik',ao_2adm)
+####    pop_pair = np.einsum('ij,ji->i', new_2rdm , ovlp).real
+####    new_2rdm = np.einsum('iijk->jk',my_2rdm)
+## #   #new_2rdm = np.einsum('ijik->jk',my_2rdm)
+###    #new_2rdm = np.einsum('ijki->jk',my_2rdm)
 ##    #new_2rdm = np.einsum('jiki->jk',my_2rdm)
 ##    #new_2rdm = np.einsum('jkii->jk',my_2rdm)
 ###    ao_2rdm = np.einsum('ij,kj,mk->im',amo, new_2rdm, amo)
@@ -203,16 +203,16 @@ def get_pair_density_distribution (mc):
 
     chg_a = np.zeros(mc._scf.mol.natm)
     chg_b = np.zeros(mc._scf.mol.natm)
-    chg_pair = np.zeros(mc._scf.mol.natm)
+    #chg_pair = np.zeros(mc._scf.mol.natm)
     for i, s in enumerate(mc._scf.mol.ao_labels(fmt=None)):
         chg_a[s[0]] += pop_a[i]
         chg_b[s[0]] += pop_b[i]
 
-        chg_pair[s[0]] += pop_pair[i]
-    print ('The alpha active electrons on each atom are', chg_a)
-    print ('The beta active electrons on each atom are', chg_b)
-    print ('The pair density on each atom is', chg_pair, np.sum(chg_pair))
-    return (pop_pair)  # ao_adm_a+ao_adm_b)
+     #   chg_pair[s[0]] += pop_pair[i]
+    #print ('The alpha active electrons on each atom are', chg_a)
+    #print ('The beta active electrons on each atom are', chg_b)
+    #print ('The pair density on each atom is', chg_pair, np.sum(chg_pair))
+    return (ao_adm_a.real , ao_adm_b.real )  # ao_adm_a+ao_adm_b)
 
 
 def _get_e_decomp (mc, ot, mo_coeff, ci, e_mcscf, e_nuc, h, xfnal, cfnal):
@@ -375,11 +375,9 @@ def get_mcpdft_child_class (mc, ot, **kwargs):
             if ci is None: ci = self.ci
             return get_energy_decomposition (self, self.otfnal, mo_coeff=mo_coeff, ci=ci)
 
-<<<<<<< HEAD
         def get_pair_density_distribution (self):
             return get_pair_density_distribution(self)
 
-=======
         def state_average (self, weights=(0.5,0.5)):
             # This is clumsy and hacky and should be fixed in pyscf.mcscf.addons eventually rather than here
             return sapdft_grad_monkeypatch_(super ().state_average (weights=weights))
@@ -388,7 +386,6 @@ def get_mcpdft_child_class (mc, ot, **kwargs):
             # This is clumsy and hacky and should be fixed in pyscf.mcscf.addons eventually rather than here
             sapdft_grad_monkeypatch_(super ().state_average_(weights=weights))
             return self
->>>>>>> laspdft_test
 
         @property
         def otxc (self):

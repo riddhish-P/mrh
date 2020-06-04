@@ -1516,32 +1516,20 @@ class dmet:
             print ("spin on the {} fragment is {:.4f} and the charge is {:.3f} ".format (frag_name, frag_spin , frag_charge))
         return 
 
-'''    def get_pair_density_distribution(self):
+    def get_pair_density_distribution(self):
         print ("Yes sir!")
         las, h2eff_sub, veff = self.lasci()
         amo = las.mo_coeff[:,las.ncore:las.ncore+las.ncas]
-        adm1s = np.stack (las.fcisolver.make_rdm1s (las.ci, las.ncas, las.nelecas), axis=0)
+        adm1s = np.stack (las.make_casdm1s () , axis=0 )
         ovlp = las._scf.mol.get_ovlp()
         [ao_adm_a , ao_adm_b] = np.einsum('ij,...kj,mk->...im',amo, adm1s, amo)
         pop_a = np.einsum('ij,ji->i', ao_adm_a , ovlp).real
         pop_b = np.einsum('ij,ji->i', ao_adm_b , ovlp).real
-
-        my_2rdm = las.fcisolver.make_rdm12 (las.ci, las.ncas, las.nelecas)[1]
-
-        ao_2adm = np.einsum('ij,kl,jlmn,om,pn-> ikop',amo,amo, my_2rdm ,amo, amo)
-
-        pop_pair = np.einsum('ijkl,ij,kl->i', ao_2adm , ovlp, ovlp).real
-
         chg_a = np.zeros(las._scf.mol.natm)
         chg_b = np.zeros(las._scf.mol.natm)
-        chg_pair = np.zeros(las._scf.mol.natm)
         for i, s in enumerate(las._scf.mol.ao_labels(fmt=None)):
             chg_a[s[0]] += pop_a[i]
             chg_b[s[0]] += pop_b[i]
-
-            chg_pair[s[0]] += pop_pair[i]
         print ('The alpha active electrons on each atom are', chg_a)
         print ('The beta active electrons on each atom are', chg_b)
-        print ('The pair density on each atom is', chg_pair, np.sum(chg_pair))
-        return (pop_pair)  # ao_adm_a+ao_adm_b)
-'''
+        return (ao_adm_a.real , ao_adm_b.real)  # ao_adm_a+ao_adm_b)
