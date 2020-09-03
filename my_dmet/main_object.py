@@ -1516,8 +1516,38 @@ class dmet:
             print ("spin on the {} fragment is {:.4f} and the charge is {:.3f} ".format (frag_name, frag_spin , frag_charge))
         return 
 
+    def get_frag_unpaired( self, mol, frag_list = None , frag_name_list=None ):
+        las, h2eff_sub, veff = self.lasci()
+        #if frag_list == None:
+        #    frag_list = []
+        #    for ff in range (len(mol.atom_coords())):
+        #        frag_list.append([ff])
+        #if frag_name_list == None:
+        #    frag_name_list = []
+        #    for f in frag_list:
+        #        frag_name_list.append(str(f)[1:-1])
+        s0 = mol.get_ovlp ()
+        rdm1 = las.make_rdm1()
+        upr_dm = (2.0*rdm1) - (np.dot(rdm1, np.dot(s0,rdm1)))
+        upr_pop = np.einsum('ij,ji->i', upr_dm, s0)
+        upr_el = np.zeros(mol.natm)
+        for i, s in enumerate(mol.ao_labels(fmt=None)):
+            upr_el[s[0]] += upr_pop[i]
+
+        print (np.round(upr_pop,2))
+        print (np.round(upr_el,2))
+
+
+        for frag , frag_name in zip (frag_list, frag_name_list):
+            frag_upr = 0.0
+            for atom in frag:
+                frag_upr += upr_el[atom]
+            print ("upr on the {} fragment is {:.4f} ".format (frag_name, frag_upr))
+        return
+
+
     def get_pair_density_distribution(self):
-        print ("Yes sir!")
+        print ("Dont use this!")
         las, h2eff_sub, veff = self.lasci()
         amo = las.mo_coeff[:,las.ncore:las.ncore+las.ncas]
         adm1s = np.stack (las.make_casdm1s () , axis=0 )
