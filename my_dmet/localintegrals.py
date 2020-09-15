@@ -400,9 +400,9 @@ class localintegrals:
         #vk = -self.loc_rhf_k_bis (oneSDM_loc) / 2
         ao2loc = self.ao2loc
         loc2ao = ao2loc.conjugate ().T
-        JKidem = loc2ao @ veff.veff_c @ ao2loc
-        JKcorr = (loc2ao @ (veff.sum (0)/2) @ ao2loc) - JKidem
-        vk = loc2ao @ ((veff[0] - veff[1])/2) @ ao2loc
+        JKidem = loc2ao @ veff.c @ ao2loc
+        JKcorr = (loc2ao @ (veff.sa.sum (0)/2) @ ao2loc) - JKidem
+        vk = loc2ao @ ((veff.sa[0] - veff.sa[1])/2) @ ao2loc
         focka_fockb = self.activeOEI + JKidem + JKcorr
         focka_fockb = [focka_fockb + vk, focka_fockb - vk] 
         idx = np.zeros (loc2mo.shape[-1], dtype=np.bool_)
@@ -433,8 +433,9 @@ class localintegrals:
         print ("LASSCF trial wave function total energy: {:.9f}".format (E))
         ao2molden, ene_no, occ_no = self.get_trial_nos (aobasis=True, loc2wmas=loc2corr, oneRDM_loc=oneRDM_loc,
             fock=self.activeFOCK, jmol_shift=True, try_symmetrize=True)
-        print ("Writing trial wave function molden")
-        molden.from_mo (self.mol, calcname + '_trial_wvfn.molden', ao2molden, occ=occ_no, ene=ene_no)
+        if self.mol.verbose:
+            print ("Writing trial wave function molden")
+            molden.from_mo (self.mol, calcname + '_trial_wvfn.molden', ao2molden, occ=occ_no, ene=ene_no)
 
     def test_total_energy (self, fragments):
         jk_c = self.activeJKidem + self.activeJKcorr
