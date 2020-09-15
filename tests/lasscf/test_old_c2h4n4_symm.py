@@ -16,15 +16,12 @@
 import copy
 import unittest
 import numpy as np
-from scipy import linalg
 from pyscf import lib, gto, scf, dft, fci, mcscf, df
-from pyscf.tools import molden
 from c2h4n4_struct import structure as struct
 from mrh.my_dmet import localintegrals, dmet, fragments
 from mrh.my_dmet.fragments import make_fragment_atom_list, make_fragment_orb_list
-from mrh.my_pyscf.mcscf.lasci import LASCI_HessianOperator, LASCI_UnitaryGroupGenerators
 
-def build (mf, m1=0, m2=0, ir1=0, ir2=0, CASlist=None, active_first=False, calcname='c2h4n4', **kwargs):
+def run (mf, m1=0, m2=0, ir1=0, ir2=0, CASlist=None, active_first=False, calcname='c2h4n4', **kwargs):
     # I/O
     # --------------------------------------------------------------------------------------------------------------------
     mol = mf.mol
@@ -34,8 +31,7 @@ def build (mf, m1=0, m2=0, ir1=0, ir2=0, CASlist=None, active_first=False, calcn
                  'debug_reloc':        False,
                  'nelec_int_thresh':   1e-3,
                  'num_mf_stab_checks': 0,
-                 'do_conv_molden':     False,
-                 'orb_maxiter':        0}
+                 'do_conv_molden':     False}
     bath_tol = 1e-8
     my_kwargs.update (kwargs)
     
@@ -51,10 +47,8 @@ def build (mf, m1=0, m2=0, ir1=0, ir2=0, CASlist=None, active_first=False, calcn
     N2Ha.bath_tol = C2H2.bath_tol = N2Hb.bath_tol = bath_tol
     N2Ha.target_S = abs (m1)
     N2Ha.target_MS = m1
-    #N2Ha.mol_output = calcname + '_N2Ha.log'
     N2Hb.target_S = abs (m2)
     N2Hb.target_MS = m2
-    #N2Hb.mol_output = calcname + '_N2Hb.log'
     if mol.symmetry:
         N2Ha.wfnsym = ir1
         N2Hb.wfnsym = ir2
@@ -67,91 +61,31 @@ def build (mf, m1=0, m2=0, ir1=0, ir2=0, CASlist=None, active_first=False, calcn
     
     # Calculation
     # --------------------------------------------------------------------------------------------------------------------
-    return c2h4n4_dmet
+    return c2h4n4_dmet.doselfconsistent ()
 
-dr_nn = 2.0
-mol = struct (dr_nn, dr_nn, '6-31g', symmetry=False)
-mol.verbose = 0 
+dr_nn = 3.0
+mol = struct (dr_nn, dr_nn, '6-31g', symmetry='Cs')
+mol.verbose = 0
 mol.output = '/dev/null'
-mol.spin = 0 
-mol.build ()
 mf = scf.RHF (mol).run ()
-dmet = build (mf, 1, -1, active_first=False)
-dmet.conv_tol_grad = 1e-5
-try:
-    e_tot = dmet.doselfconsistent ()
-except RuntimeError as e:
-    e_tot = 0.0
-
-#np.savetxt ('test_lasci_mo.dat', dmet.las.mo_coeff)
-#np.savetxt ('test_lasci_ci0.dat', dmet.las.ci0)
-#np.savetxt ('test_lasci_ci1.dat', dmet.las.ci[1])
-dmet.las.mo_coeff = np.loadtxt ('test_lasci_mo.dat')
-dmet.las.ci[0] = [np.loadtxt ('test_lasci_ci0.dat')]
-dmet.las.ci[1] = [-np.loadtxt ('test_lasci_ci1.dat').T]
-ugg = LASCI_UnitaryGroupGenerators (dmet.las, dmet.las.mo_coeff, dmet.las.ci)
-h_op = LASCI_HessianOperator (dmet.las, ugg)
-np.random.seed (0)
-x = np.random.rand (ugg.nvar_tot)
+mf_df = mf.density_fit (auxbasis = df.aug_etb (mol)).run ()
 
 def tearDownModule():
-    global mol, mf, dmet, ugg, h_op, x
+    global mol, mf, mf_df
     mol.stdout.close ()
-    del mol, mf, dmet, ugg, h_op, x
+    del mol, mf, mf_df 
 
 
 class KnownValues(unittest.TestCase):
-    def test_grad (self):
-        gorb0, gci0, gx0 = dmet.las.get_grad (ugg=ugg)
-        grad0 = np.append (gorb0, gci0)
-        grad1 = h_op.get_grad ()
-        gx1 = h_op.get_gx ()
-        self.assertAlmostEqual (lib.fp (grad0), 0.0116625439865621, 9)
-        self.assertAlmostEqual (lib.fp (grad1), 0.0116625439865621, 9)
-        self.assertAlmostEqual (lib.fp (gx0), -0.0005604501808183955, 9)
-        self.assertAlmostEqual (lib.fp (gx1), -0.0005604501808183955, 9)
 
-    def test_hessian (self):
-        hx = h_op._matvec (x)
-        self.assertAlmostEqual (lib.fp (hx), 179.62614044038656, 8)
+    def test_symm (self):
+        self.assertAlmostEqual (run (mf, calcname='symm'), -295.44779578419946, 7)
 
-    def test_hc2 (self):
-        xp = x.copy ()
-        xp[:-16] = 0.0
-        hx = h_op._matvec (xp)[-16:]
-        self.assertAlmostEqual (lib.fp (hx), -0.15501937126181198, 8)
-
-    def test_hcc (self):
-        xp = x.copy ()
-        xp[:-16] = 0.0
-        hx = h_op._matvec (xp)[-32:-16]
-        self.assertAlmostEqual (lib.fp (hx), -0.0012479602465573338, 8)
-
-    def test_hco (self):
-        xp = x.copy ()
-        xp[-32:] = 0.0
-        hx = h_op._matvec (xp)[-32:]
-        self.assertAlmostEqual (lib.fp (hx), 0.24146683733262314, 8)
-
-    def test_hoc (self):
-        xp = x.copy ()
-        xp[:-32] = 0.0
-        hx = h_op._matvec (xp)[:-32]
-        self.assertAlmostEqual (lib.fp (hx), 0.004043162158208144, 8)
-
-    def test_hoo (self):
-        xp = x.copy ()
-        xp[-32:] = 0.0
-        hx = h_op._matvec (xp)[:-32]
-        self.assertAlmostEqual (lib.fp (hx), 182.07818989609675, 8)
-
-    def test_prec (self):
-        M_op = h_op.get_prec ()
-        Mx = M_op._matvec (x)
-        self.assertAlmostEqual (lib.fp (Mx), 916.0713341862406, 8)
-
+    def test_symm_df (self):
+        self.assertAlmostEqual (run (mf_df, calcname='symm_df'), -295.44716017803967, 7)
+        
 
 if __name__ == "__main__":
-    print("Full Tests for LASCI module functions")
+    print("Full Tests for (old) LASSCF c2h4n4 with symmetry")
     unittest.main()
 
