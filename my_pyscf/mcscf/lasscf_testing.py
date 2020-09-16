@@ -262,6 +262,7 @@ class LASSCFNoSymm (lasci.LASCINoSymm):
         if spin is None:
             spin = self.nelecas[0] - self.nelecas[1]
         assert (spin % 2 == sum (self.nelecas) % 2)
+        print (frags_atoms, len (frags_atoms), len (self.ncas_sub) , self.ncas_sub)
         assert (len (frags_atoms) == len (self.ncas_sub))
         ao_offset = self.mol.offset_ao_by_atom ()
         frags_orbs = [[orb for atom in frag_atoms for orb in list (range (ao_offset[atom,2], ao_offset[atom,3]))] for frag_atoms in frags_atoms]
